@@ -41,7 +41,7 @@
         </div>
       </div>
 
-      <button class="btn" type="button" @click="$emit('refresh')">
+      <button class="btn refresh-btn" type="button" @click="$emit('refresh')">
         <i class="icon"><SvgIcon name="refresh" :size="17" /></i>
         <span>刷新</span>
       </button>

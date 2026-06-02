@@ -96,10 +96,14 @@ async def get_public_system_config(request: Request):
         account_switch_mode = await config_manager.get_async("index_account_switch_mode") or "dropdown"
         if account_switch_mode not in {"dropdown", "floating"}:
             account_switch_mode = "dropdown"
+        theme = await config_manager.get_async("theme") or "light"
+        if theme not in {"light", "dark", "auto"}:
+            theme = "light"
 
         return APIResponse.success(
             data={
                 "index_account_switch_mode": account_switch_mode,
+                "theme": theme,
             },
             message="成功获取前台配置"
         )

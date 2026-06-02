@@ -82,6 +82,8 @@ const displayStartM = ref(0)
 const displayEndH = ref(0)
 const displayEndM = ref(0)
 const hoveredWheel = ref('')
+const activeColor = ref('#3b82f6')
+const inactiveColor = ref('#9aa6b6')
 
 let stepHoldTimer = null
 let stepHoldInterval = null
@@ -119,7 +121,7 @@ function itemStyle(key, value) {
   const hidden = abs > VISIBLE_RADIUS
   const scale = abs === 0 ? 1 : 0.88
   const opacity = hidden ? 0 : abs === 0 ? 1 : abs === 1 ? 0.58 : 0.26
-  const color = abs === 0 ? '#3b82f6' : '#9aa6b6'
+  const color = abs === 0 ? activeColor.value : inactiveColor.value
 
   return {
     transform: `translateY(calc(-50% + ${diff * ITEM_H}px)) scale(${scale})`,
@@ -208,6 +210,9 @@ onBeforeUnmount(() => {
 
 watch(() => props.visible, (v) => {
   if (v) {
+    const isDark = document?.documentElement?.dataset?.theme === 'dark'
+    activeColor.value = isDark ? '#e5edf8' : '#3b82f6'
+    inactiveColor.value = isDark ? 'rgba(148, 163, 184, 0.78)' : '#9aa6b6'
     window.addEventListener('keydown', onKeydown, true)
     if (props.allDay) {
       startH.value = 0; startM.value = 0

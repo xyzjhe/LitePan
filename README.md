@@ -1,6 +1,8 @@
-# LitePan v0.1.7 Beta
+# LitePan v0.1.8
 
 LitePan 是一个多网盘聚合与管理工具，支持 Web 界面、WebDAV、STRM 生成、媒体整理等功能。
+
+官网 / 文档站：[http://www.litepan.top](http://www.litepan.top)
 
 默认服务端口：**5211**
 

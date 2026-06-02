@@ -57,6 +57,37 @@
           <div class="breadcrumb">{{ currentPageTitle }}</div>
         </div>
         <div class="navbar-right">
+          <button
+            class="nav-action theme-toggle-action"
+            type="button"
+            :title="themeToggleTitle"
+            :aria-label="themeToggleTitle"
+            :disabled="themeSaving"
+            @click="toggleTheme"
+          >
+            <svg
+              v-if="currentTheme === 'light'"
+              class="theme-sun-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4"></circle>
+              <path d="M12 2v2"></path>
+              <path d="M12 20v2"></path>
+              <path d="m4.93 4.93 1.41 1.41"></path>
+              <path d="m17.66 17.66 1.41 1.41"></path>
+              <path d="M2 12h2"></path>
+              <path d="M20 12h2"></path>
+              <path d="m6.34 17.66-1.41 1.41"></path>
+              <path d="m19.07 4.93-1.41 1.41"></path>
+            </svg>
+            <i v-else :class="themeIconClass"></i>
+          </button>
           <div class="notification-bell-wrapper">
             <button class="nav-action notification-bell" title="通知" @click="toggleNotificationPanel">
               <i class="fas fa-bell"></i>
@@ -405,11 +436,12 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useAdminStore } from '../stores/admin'
 import axios from 'axios'
 import { APP_VERSION } from '../constants/app'
+import { applyTheme, isValidTheme } from '../utils/theme'
 import AccountManagement from '../components/admin/AccountManagement.vue'
 import SystemSettings from '../components/admin/SystemSettings.vue'
 import CacheCenter from '../components/admin/CacheCenter.vue'
@@ -421,6 +453,7 @@ import DriverIcon from '../components/common/DriverIcon.vue'
 
 // 路由
 const router = useRouter()
+const route = useRoute()
 const appVersion = APP_VERSION
 
 // 当前页面状态
@@ -428,6 +461,8 @@ const currentPage = ref('dashboard')
 const mustChangePassword = ref(false)
 const passwordChangeReason = ref('')
 const homeReturnMode = ref('top_icon')
+const currentTheme = ref('light')
+const themeSaving = ref(false)
 const dashboardCacheClearing = ref(false)
 
 // 小屏抽屉状态
@@ -461,6 +496,25 @@ const pageTitles = {
   logs: '系统日志',
   plugins: '插件中心'
 }
+const adminPageKeys = Object.keys(pageTitles)
+
+const normalizeAdminPage = (page) => {
+  const value = String(page || '').trim()
+  return adminPageKeys.includes(value) ? value : 'dashboard'
+}
+
+const updateAdminPageQuery = (page, method = 'push') => {
+  const target = normalizeAdminPage(page)
+  if (route.path !== '/admin') return
+  if (String(route.query.page || '') === target) return
+  router[method]({
+    path: '/admin',
+    query: {
+      ...route.query,
+      page: target
+    }
+  })
+}
 
 // 计算属性
 const connectedAccounts = computed(() => {
@@ -470,6 +524,17 @@ const connectedAccounts = computed(() => {
 const currentPageTitle = computed(() => pageTitles[currentPage.value] || '管理后台')
 const showSidebarHomeReturn = computed(() => ['sidebar', 'both'].includes(homeReturnMode.value))
 const showTopHomeReturn = computed(() => ['top_icon', 'both'].includes(homeReturnMode.value))
+const themeLabels = {
+  auto: '跟随系统',
+  light: '浅色主题',
+  dark: '深色主题'
+}
+const themeIcons = {
+  auto: 'fas fa-desktop',
+  dark: 'fas fa-moon'
+}
+const themeIconClass = computed(() => themeIcons[currentTheme.value] || themeIcons.auto)
+const themeToggleTitle = computed(() => `当前：${themeLabels[currentTheme.value] || themeLabels.light}，点击切换主题`)
 const passwordChangeMessage = computed(() => {
   if (passwordChangeReason.value === 'default_credentials') {
     return '当前仍在使用默认管理员口令（admin/admin）。为保证后台安全，请先修改管理员密码。'
@@ -547,9 +612,10 @@ const getDriverLabel = (driverType) => {
 
 const getDriverCardStyle = (driverType) => {
   const color = getDriverColor(driverType)
+  const tail = document?.documentElement?.dataset?.theme === 'dark' ? 'rgba(24, 29, 37, 0.92)' : '#ffffff'
   return {
     '--driver-color': color,
-    background: `linear-gradient(135deg, ${hexToRgba(color, 0.13)} 0%, ${hexToRgba(color, 0.055)} 36%, #ffffff 82%)`
+    background: `linear-gradient(135deg, ${hexToRgba(color, 0.18)} 0%, ${hexToRgba(color, 0.08)} 36%, ${tail} 82%)`
   }
 }
 
@@ -698,9 +764,39 @@ const loadAdminSystemConfig = async () => {
     if (response.data?.success) {
       const mode = response.data.data?.admin_home_return_mode
       homeReturnMode.value = ['sidebar', 'top_icon', 'both'].includes(mode) ? mode : 'top_icon'
+      const theme = response.data.data?.theme
+      currentTheme.value = isValidTheme(theme) ? theme : 'light'
+      applyTheme(currentTheme.value)
     }
   } catch (error) {
     homeReturnMode.value = 'top_icon'
+  }
+}
+
+const getNextTheme = (theme) => {
+  const order = ['auto', 'light', 'dark']
+  const index = order.indexOf(theme)
+  return order[(index + 1) % order.length]
+}
+
+const toggleTheme = async () => {
+  if (themeSaving.value) return
+  const previousTheme = isValidTheme(currentTheme.value) ? currentTheme.value : 'light'
+  const nextTheme = getNextTheme(previousTheme)
+  currentTheme.value = nextTheme
+  applyTheme(nextTheme)
+  themeSaving.value = true
+  try {
+    const response = await axios.post('/api/admin/theme', { theme: nextTheme })
+    if (!response.data?.success) {
+      throw new Error(response.data?.message || '主题保存失败')
+    }
+  } catch (error) {
+    currentTheme.value = previousTheme
+    applyTheme(previousTheme)
+    window.appNotification?.error?.('主题保存失败: ' + (error.message || '未知错误'))
+  } finally {
+    themeSaving.value = false
   }
 }
 
@@ -710,11 +806,11 @@ const isPageLocked = (page) => mustChangePassword.value && page !== 'settings'
 const setCurrentPage = (page) => {
   if (isPageLocked(page)) {
     window.appNotification?.warning('请先在“系统设置”中修改管理员密码')
-    currentPage.value = 'settings'
+    updateAdminPageQuery('settings')
     closeSidebar()
     return
   }
-  currentPage.value = page
+  updateAdminPageQuery(page)
   closeSidebar()
 }
 
@@ -852,7 +948,7 @@ onMounted(async () => {
     await loadAdminSystemConfig()
 
     if (mustChangePassword.value) {
-      currentPage.value = 'settings'
+      updateAdminPageQuery('settings', 'replace')
       return
     }
 
@@ -879,6 +975,24 @@ onBeforeUnmount(() => {
   }
   document.removeEventListener('click', handleClickOutside)
 })
+
+watch(
+  () => route.query.page,
+  (page) => {
+    const target = normalizeAdminPage(page)
+    if (page && String(page) !== target) {
+      updateAdminPageQuery(target, 'replace')
+      return
+    }
+    if (isPageLocked(target)) {
+      updateAdminPageQuery('settings', 'replace')
+      currentPage.value = 'settings'
+      return
+    }
+    currentPage.value = target
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped>
@@ -1122,6 +1236,24 @@ onBeforeUnmount(() => {
 .nav-action:hover {
   background-color: #F5F7FA;
   color: #4C74DF;
+}
+
+.theme-toggle-action {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.theme-sun-icon {
+  width: 19px;
+  height: 19px;
+  color: #facc15;
+}
+
+.theme-toggle-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 /* 按钮类型的导航动作 */
@@ -2240,3 +2372,29 @@ onBeforeUnmount(() => {
   }
 }
 </style> 
+
+<style>
+:root[data-theme="dark"] .admin-container .main-body::-webkit-scrollbar-track,
+:root[data-theme="dark"] .admin-container .dash-acc-list::-webkit-scrollbar-track,
+:root[data-theme="dark"] .admin-container .notification-list::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+:root[data-theme="dark"] .admin-container .main-body::-webkit-scrollbar-thumb,
+:root[data-theme="dark"] .admin-container .dash-acc-list::-webkit-scrollbar-thumb,
+:root[data-theme="dark"] .admin-container .notification-list::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.7) !important;
+}
+
+:root[data-theme="dark"] .admin-container .main-body::-webkit-scrollbar-thumb:hover,
+:root[data-theme="dark"] .admin-container .dash-acc-list::-webkit-scrollbar-thumb:hover,
+:root[data-theme="dark"] .admin-container .notification-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(203, 213, 225, 0.86) !important;
+}
+
+:root[data-theme="dark"] .admin-container .main-body::-webkit-scrollbar-corner,
+:root[data-theme="dark"] .admin-container .dash-acc-list::-webkit-scrollbar-corner,
+:root[data-theme="dark"] .admin-container .notification-list::-webkit-scrollbar-corner {
+  background: transparent !important;
+}
+</style>

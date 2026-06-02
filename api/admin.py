@@ -1164,6 +1164,9 @@ async def get_system_config(session_data: dict = Depends(require_admin_auth)):
         admin_home_return_mode = await config_manager.get_async('admin_home_return_mode') or "top_icon"
         if admin_home_return_mode not in {"sidebar", "top_icon", "both"}:
             admin_home_return_mode = "top_icon"
+        theme = await config_manager.get_async('theme') or "light"
+        if theme not in {"light", "dark", "auto"}:
+            theme = "light"
         
         # 兼容老数据：>8192 视为 bytes，其它按 KB；并回落到默认 256KB
         if webdav_chunk_size and webdav_chunk_size > 8192:
@@ -1183,6 +1186,7 @@ async def get_system_config(session_data: dict = Depends(require_admin_auth)):
                 "public_index_enabled": normalize_bool(public_index_enabled, True),
                 "index_account_switch_mode": index_account_switch_mode,
                 "admin_home_return_mode": admin_home_return_mode,
+                "theme": theme,
                 "upload_task_concurrency": await config_manager.get_async('upload_task_concurrency') or 3,
                 "log_retention_days": await config_manager.get_async('log_retention_days') or 30,
                 "auth_active_refresh_enabled": normalize_bool(auth_active_refresh_enabled, True),
@@ -1200,6 +1204,23 @@ async def get_system_config(session_data: dict = Depends(require_admin_auth)):
             "success": False,
             "message": f"获取配置失败: {str(e)}"
         }
+
+@router.post("/theme")
+async def update_theme(
+    request: Request,
+    session_data: dict = Depends(require_admin_auth)
+):
+    try:
+        data = await request.json()
+        theme = data.get('theme')
+        if theme not in {"light", "dark", "auto"}:
+            return _error_response(message="界面主题不正确")
+
+        from config import config_manager
+        await config_manager.set_async('theme', theme)
+        return _success_response(data={"theme": theme}, message="界面主题已更新")
+    except Exception as e:
+        return _error_response(message=f"更新界面主题失败: {str(e)}")
 
 @router.post("/update-credentials")
 async def update_admin_credentials(
@@ -1219,6 +1240,7 @@ async def update_admin_credentials(
         auth_active_refresh_enabled = credentials_data.get('auth_active_refresh_enabled')
         index_account_switch_mode = credentials_data.get('index_account_switch_mode')
         admin_home_return_mode = credentials_data.get('admin_home_return_mode')
+        theme = credentials_data.get('theme')
 
         if not username:
             return _error_response(message="用户名不能为空")
@@ -1256,6 +1278,9 @@ async def update_admin_credentials(
         if admin_home_return_mode is not None and admin_home_return_mode not in {"sidebar", "top_icon", "both"}:
             return _error_response(message="主页返回方式不正确")
 
+        if theme is not None and theme not in {"light", "dark", "auto"}:
+            return _error_response(message="界面主题不正确")
+
         async def apply_upload_task_concurrency():
             if upload_task_concurrency is None:
                 return
@@ -1287,6 +1312,11 @@ async def update_admin_credentials(
                 return
             await config_manager.set_async('admin_home_return_mode', admin_home_return_mode)
 
+        async def apply_theme():
+            if theme is None:
+                return
+            await config_manager.set_async('theme', theme)
+
         async def apply_log_retention_days():
             if log_retention_days is None:
                 return
@@ -1311,6 +1341,7 @@ async def update_admin_credentials(
             await apply_auth_active_refresh_setting()
             await apply_index_account_switch_mode()
             await apply_admin_home_return_mode()
+            await apply_theme()
             await apply_log_retention_days()
             return _success_response(message="管理员设置更新成功")
         
@@ -1330,6 +1361,7 @@ async def update_admin_credentials(
         await apply_auth_active_refresh_setting()
         await apply_index_account_switch_mode()
         await apply_admin_home_return_mode()
+        await apply_theme()
         await apply_log_retention_days()
         
         return _success_response(message="管理员设置更新成功")

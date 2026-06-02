@@ -138,6 +138,9 @@
 
 .modern-modal.modal-folder-selector .file-list {
     margin-top: 2px !important;
+    height: 345px;
+    max-height: 345px;
+    min-height: 345px;
 }
 
 .modern-modal-body.modal-body-flush {

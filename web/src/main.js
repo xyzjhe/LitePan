@@ -33,11 +33,15 @@ import './assets/iconfont/iconfont.js'
 import './assets/global.css'
 import './assets/index.css'
 import './assets/modern-modal.css'
+import './assets/theme.css'
 
 // 引入通知系统
 import './utils/notification.js'
+import { initTheme } from './utils/theme'
 
 const app = createApp(App)
+
+initTheme()
 
 app.use(router)
 app.use(createPinia())

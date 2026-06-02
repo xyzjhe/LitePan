@@ -49,9 +49,11 @@
         <div v-else-if="selectedPlugin.has_frontend" class="runtime-plugin-panel">
           <iframe
             :key="pluginFrameKey"
+            ref="runtimeFrameRef"
             class="plugin-runtime-frame"
             :src="buildPluginAssetUrl(selectedPlugin.frontend_entry_url, selectedPlugin.frontend_asset_version, pluginFrameKey)"
             :title="selectedPlugin.name"
+            @load="handleRuntimeFrameLoad"
           ></iframe>
         </div>
         <div v-else-if="selectedPlugin.id === 'resource_search'" class="plugin-panel">
@@ -134,9 +136,11 @@
         <div v-else-if="configPlugin?.has_config_frontend" class="plugin-config-runtime">
           <iframe
             :key="configFrameKey"
+            ref="configFrameRef"
             class="plugin-runtime-frame"
             :src="buildPluginAssetUrl(configPlugin.config_frontend_entry_url, configPlugin.config_frontend_asset_version, configFrameKey)"
             :title="`${configPlugin.name} 配置`"
+            @load="handleConfigFrameLoad"
           ></iframe>
         </div>
         <div v-else-if="configPlugin.id === 'resource_search'" class="resource-config">
@@ -242,6 +246,8 @@ const selectedPluginId = ref('')
 const configPluginId = ref('')
 const pluginRuntimeHost = ref(null)
 const pluginConfigHost = ref(null)
+const runtimeFrameRef = ref(null)
+const configFrameRef = ref(null)
 const pluginConfig = ref({})
 const searchKeyword = ref('')
 const searchResults = ref([])
@@ -259,6 +265,7 @@ const pluginFrameKey = ref(0)
 const configFrameKey = ref(0)
 let runtimePluginInstance = null
 let runtimeConfigInstance = null
+let themeObserver = null
 const activeSearchJobId = ref('')
 const searchPollTimer = ref(null)
 const searchStatus = ref({
@@ -280,6 +287,100 @@ const buildPluginAssetUrl = (baseUrl, assetVersion, frameVersion) => {
   const version = versionParts.join('-')
   if (!version) return baseUrl
   return `${baseUrl}?v=${version}`
+}
+
+const getCurrentTheme = () => document?.documentElement?.dataset?.theme || ''
+
+const getInjectedThemeCss = (theme) => {
+  if (theme !== 'dark') return ''
+  return `
+html, body {
+  background: #101215 !important;
+  color: #e7eaf0 !important;
+  color-scheme: dark !important;
+}
+body {
+  -webkit-font-smoothing: antialiased;
+}
+a {
+  color: #93c5fd !important;
+}
+input, textarea, select {
+  background: rgba(13, 18, 26, 0.74) !important;
+  border: 1px solid rgba(148, 163, 184, 0.22) !important;
+  color: #e5edf8 !important;
+}
+input::placeholder, textarea::placeholder {
+  color: rgba(148, 163, 184, 0.8) !important;
+}
+[class*="card"], [class*="panel"], [class*="container"], .box {
+  background: rgba(24, 29, 37, 0.98) !important;
+  border-color: rgba(148, 163, 184, 0.16) !important;
+}
+`
+}
+
+const applyThemeToDocument = (doc) => {
+  if (!doc) return
+  const theme = getCurrentTheme()
+  if (theme) {
+    doc.documentElement.dataset.theme = theme
+  } else {
+    delete doc.documentElement.dataset.theme
+  }
+
+  const styleId = 'litepan-plugin-theme'
+  const cssText = getInjectedThemeCss(theme)
+  const existing = doc.getElementById(styleId)
+  if (!cssText) {
+    if (existing) existing.remove()
+    return
+  }
+
+  const styleEl = existing || doc.createElement('style')
+  styleEl.id = styleId
+  styleEl.textContent = cssText
+  if (!existing) {
+    doc.head?.appendChild(styleEl)
+  }
+}
+
+const applyThemeToFrame = (frameEl) => {
+  if (!frameEl) return
+  try {
+    const doc = frameEl.contentDocument
+    if (!doc) return
+    applyThemeToDocument(doc)
+  } catch (_) {
+  }
+}
+
+const notifyRuntimeTheme = () => {
+  const theme = getCurrentTheme()
+  if (runtimePluginInstance && typeof runtimePluginInstance.setTheme === 'function') {
+    runtimePluginInstance.setTheme(theme)
+  } else if (runtimePluginInstance && typeof runtimePluginInstance.onThemeChange === 'function') {
+    runtimePluginInstance.onThemeChange(theme)
+  }
+  applyThemeToFrame(runtimeFrameRef.value)
+}
+
+const notifyConfigTheme = () => {
+  const theme = getCurrentTheme()
+  if (runtimeConfigInstance && typeof runtimeConfigInstance.setTheme === 'function') {
+    runtimeConfigInstance.setTheme(theme)
+  } else if (runtimeConfigInstance && typeof runtimeConfigInstance.onThemeChange === 'function') {
+    runtimeConfigInstance.onThemeChange(theme)
+  }
+  applyThemeToFrame(configFrameRef.value)
+}
+
+const handleRuntimeFrameLoad = () => {
+  applyThemeToFrame(runtimeFrameRef.value)
+}
+
+const handleConfigFrameLoad = () => {
+  applyThemeToFrame(configFrameRef.value)
 }
 
 const loadPlugins = async () => {
@@ -666,12 +767,21 @@ const syncImportTextFromConfig = (config) => {
 onMounted(() => {
   loadPlugins()
   window.addEventListener('keydown', handleGlobalKeydown)
+  themeObserver = new MutationObserver(() => {
+    notifyRuntimeTheme()
+    notifyConfigTheme()
+  })
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
 })
 
 onUnmounted(() => {
   stopSearchPolling()
   destroyRuntimePlugin()
   window.removeEventListener('keydown', handleGlobalKeydown)
+  if (themeObserver) {
+    themeObserver.disconnect()
+    themeObserver = null
+  }
 })
 
 const handleGlobalKeydown = (event) => {
@@ -685,6 +795,7 @@ const destroyRuntimePlugin = () => {
     runtimePluginInstance.unmount()
   }
   runtimePluginInstance = null
+  applyThemeToFrame(runtimeFrameRef.value)
 }
 
 const destroyConfigPlugin = () => {
@@ -692,6 +803,7 @@ const destroyConfigPlugin = () => {
     runtimeConfigInstance.unmount()
   }
   runtimeConfigInstance = null
+  applyThemeToFrame(configFrameRef.value)
 }
 
 const mountRuntimePlugin = async () => {
@@ -714,9 +826,11 @@ const mountRuntimePlugin = async () => {
     }
     const instance = await mount(pluginRuntimeHost.value, {
       plugin,
-      notify: window.appNotification
+      notify: window.appNotification,
+      theme: getCurrentTheme()
     })
     runtimePluginInstance = instance && typeof instance === 'object' ? instance : null
+    notifyRuntimeTheme()
   } catch (error) {
     window.appNotification?.error(error?.message || '加载插件前台失败')
   }
@@ -746,9 +860,11 @@ const mountConfigPlugin = async () => {
       notify: window.appNotification,
       saveConfig: savePluginConfigFromRuntime,
       testConnection: testPluginConnectionFromRuntime,
-      closeConfig: closePluginConfig
+      closeConfig: closePluginConfig,
+      theme: getCurrentTheme()
     })
     runtimeConfigInstance = instance && typeof instance === 'object' ? instance : null
+    notifyConfigTheme()
   } catch (error) {
     window.appNotification?.error(error?.message || '加载插件配置前台失败')
   }

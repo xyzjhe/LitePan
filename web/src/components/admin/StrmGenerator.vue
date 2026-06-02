@@ -665,11 +665,7 @@
               </div>
               <div class="form-group">
                 <label>媒体类型</label>
-                <select v-model="organizeForm.media_type" class="form-input">
-                  <option value="auto">自动检测</option>
-                  <option value="movie">电影</option>
-                  <option value="tv">剧集</option>
-                </select>
+                <CustomSelect v-model="organizeForm.media_type" :options="mediaTypeOptions" placeholder="请选择" />
               </div>
             </div>
             <div class="form-row" v-else>
@@ -682,11 +678,7 @@
               </div>
               <div class="form-group">
                 <label>媒体类型</label>
-                <select v-model="organizeForm.media_type" class="form-input">
-                  <option value="auto">自动检测</option>
-                  <option value="movie">电影</option>
-                  <option value="tv">剧集</option>
-                </select>
+                <CustomSelect v-model="organizeForm.media_type" :options="mediaTypeOptions" placeholder="请选择" />
               </div>
             </div>
 
@@ -1630,6 +1622,11 @@ let organizePlanProgressTimer = null
 const boolOptions = [
   { value: 'true', label: '开启' },
   { value: 'false', label: '关闭' },
+]
+const mediaTypeOptions = [
+  { value: 'auto', label: '自动检测' },
+  { value: 'movie', label: '电影' },
+  { value: 'tv', label: '剧集' },
 ]
 const organizeForm = reactive({
   task_name: '',
@@ -5798,6 +5795,8 @@ onBeforeUnmount(() => {
 
 .branch-path-field .form-input {
   min-width: 0;
+  width: auto;
+  flex: 1 1 auto;
 }
 
 .branch-path-field .browse-btn {

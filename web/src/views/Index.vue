@@ -361,8 +361,11 @@ import SvgIcon from '../components/icons/SvgIcon.vue'
 import DriverIcon from '../components/common/DriverIcon.vue'
 import UploadNoticeDialog from '../components/index/UploadNoticeDialog.vue'
 import UploadConflictDialog from '../components/index/UploadConflictDialog.vue'
+import UploadTaskDeleteDialog from '../components/index/UploadTaskDeleteDialog.vue'
+import BatchUploadTaskDeleteDialog from '../components/index/BatchUploadTaskDeleteDialog.vue'
 import { APP_VERSION } from '../constants/app'
 import { canPreviewFile, getPreviewKind, getPreviewableFiles } from '../utils/fileTypes.js'
+import { applyTheme } from '../utils/theme'
 
 const { confirm, form, custom, closeModal } = useModal()
 import axios from 'axios'
@@ -944,134 +947,32 @@ const showUploadConflictDialog = async (fileName) => {
 }
 
 const showUploadTaskDeleteDialog = async (task) => {
-  return await new Promise((resolve) => {
-    const isUploadedTask = task.status === 'success'
-    const actionButtonsHtml = isUploadedTask
-      ? `
-        <label style="display:flex;align-items:center;gap:8px;padding:0 22px 18px;color:#64748b;font-size:14px;cursor:pointer;">
-          <input type="checkbox" data-role="delete-file" style="width:16px;height:16px;">
-          <span>同时删除文件</span>
-        </label>
-      `
-      : ''
-
-    const overlay = document.createElement('div')
-    overlay.style.cssText = `
-      position: fixed;
-      inset: 0;
-      background: rgba(15, 23, 42, 0.28);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 10020;
-    `
-
-    const dialog = document.createElement('div')
-    dialog.style.cssText = `
-      width: min(520px, calc(100vw - 40px));
-      background: #fff;
-      border-radius: 16px;
-      box-shadow: 0 20px 60px rgba(15, 23, 42, 0.18);
-      overflow: hidden;
-    `
-
-    dialog.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 22px 0;">
-        <div style="font-size:28px;font-weight:700;color:#111827;">删除任务</div>
-        <button type="button" data-action="close" style="width:24px;height:24px;border:none;background:transparent;color:#64748b;font-size:24px;line-height:1;cursor:pointer;">×</button>
-      </div>
-      <div style="padding:18px 22px 16px;color:#475569;font-size:15px;line-height:1.8;">
-        <div>确定要删除任务</div>
-        <div style="margin-top:4px;color:#111827;word-break:break-all;">${task.file_name}</div>
-      </div>
-      ${actionButtonsHtml}
-      <div style="display:flex;justify-content:flex-end;padding:0 22px 22px;">
-        <button type="button" data-action="delete-task" style="min-width:96px;height:36px;border:none;border-radius:10px;background:linear-gradient(135deg, #ef4444 0%, #f97316 100%);color:#fff;cursor:pointer;">删除</button>
-      </div>
-    `
-
-    const cleanup = (result = null) => {
-      overlay.remove()
-      resolve(result)
+  return await custom({
+    title: '',
+    size: 'medium',
+    closable: false,
+    hideFooter: true,
+    component: UploadTaskDeleteDialog,
+    componentProps: {
+      taskName: task.file_name,
+      allowDeleteUploadedFile: task.status === 'success'
     }
-
-    overlay.addEventListener('click', (event) => {
-      if (event.target === overlay) {
-        cleanup(null)
-      }
-    })
-
-    dialog.querySelector('[data-action="close"]').addEventListener('click', () => cleanup(null))
-    dialog.querySelector('[data-action="delete-task"]').addEventListener('click', () => cleanup({
-      deleteUploadedFile: Boolean(dialog.querySelector('[data-role="delete-file"]')?.checked)
-    }))
-
-    overlay.appendChild(dialog)
-    document.body.appendChild(overlay)
-  })
+  }).catch(() => null)
 }
 
 const showBatchUploadTaskDeleteDialog = async (tasks) => {
-  return await new Promise((resolve) => {
-    const successCount = tasks.filter(task => task.status === 'success').length
-    const overlay = document.createElement('div')
-    overlay.style.cssText = `
-      position: fixed;
-      inset: 0;
-      background: rgba(15, 23, 42, 0.28);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 10020;
-    `
-
-    const dialog = document.createElement('div')
-    dialog.style.cssText = `
-      width: min(540px, calc(100vw - 40px));
-      background: #fff;
-      border-radius: 16px;
-      box-shadow: 0 20px 60px rgba(15, 23, 42, 0.18);
-      overflow: hidden;
-    `
-
-    dialog.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 22px 0;">
-        <div style="font-size:28px;font-weight:700;color:#111827;">批量删除任务</div>
-        <button type="button" data-action="close" style="width:24px;height:24px;border:none;background:transparent;color:#64748b;font-size:24px;line-height:1;cursor:pointer;">×</button>
-      </div>
-      <div style="padding:18px 22px 16px;color:#475569;font-size:15px;line-height:1.8;">
-        <div>确定要删除 ${tasks.length} 个任务吗？</div>
-      </div>
-      ${successCount > 0 ? `
-        <label style="display:flex;align-items:center;gap:8px;padding:0 22px 18px;color:#64748b;font-size:14px;cursor:pointer;">
-          <input type="checkbox" data-role="delete-file" style="width:16px;height:16px;">
-          <span>同时删除文件</span>
-        </label>
-      ` : ''}
-      <div style="display:flex;justify-content:flex-end;padding:0 22px 22px;">
-        <button type="button" data-action="delete-task" style="min-width:96px;height:36px;border:none;border-radius:10px;background:linear-gradient(135deg, #ef4444 0%, #f97316 100%);color:#fff;cursor:pointer;">删除</button>
-      </div>
-    `
-
-    const cleanup = (result = null) => {
-      overlay.remove()
-      resolve(result)
+  const successCount = tasks.filter(task => task.status === 'success').length
+  return await custom({
+    title: '',
+    size: 'medium',
+    closable: false,
+    hideFooter: true,
+    component: BatchUploadTaskDeleteDialog,
+    componentProps: {
+      taskCount: tasks.length,
+      successCount
     }
-
-    overlay.addEventListener('click', (event) => {
-      if (event.target === overlay) {
-        cleanup(null)
-      }
-    })
-
-    dialog.querySelector('[data-action="close"]').addEventListener('click', () => cleanup(null))
-    dialog.querySelector('[data-action="delete-task"]').addEventListener('click', () => cleanup({
-      deleteUploadedFile: Boolean(dialog.querySelector('[data-role="delete-file"]')?.checked)
-    }))
-
-    overlay.appendChild(dialog)
-    document.body.appendChild(overlay)
-  })
+  }).catch(() => null)
 }
 
 const canHandleUploadTaskPrimaryAction = (task) => {
@@ -1660,6 +1561,7 @@ const loadPublicSystemConfig = async () => {
     if (response.data?.success) {
       const mode = response.data.data?.index_account_switch_mode
       accountSwitchMode.value = ['dropdown', 'floating'].includes(mode) ? mode : 'dropdown'
+      applyTheme(response.data.data?.theme)
     }
   } catch (error) {
     accountSwitchMode.value = 'dropdown'
