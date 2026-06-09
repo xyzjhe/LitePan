@@ -104,5 +104,12 @@ class BaseDriver(ABC):
         """
         raise NotImplementedError(f"{self.__class__.__name__} 不支持指纹秒传")
 
+    async def purge_file(self, file_id: str) -> OperationResult:
+        """彻底删除（不进回收站）。默认等同 delete_file；具备彻底删除能力的驱动覆写。
+
+        供跨盘探测临时目录、未命中空目录等内部清理场景使用，避免污染目标盘回收站。
+        """
+        return await self.delete_file(file_id)
+
     def __str__(self) -> str:
         return f"<{self.__class__.__name__} account_id={self.account_id}>"

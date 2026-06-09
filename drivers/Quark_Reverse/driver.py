@@ -170,7 +170,7 @@ class QuarkReverseDriver(BaseDriver):
         await self.wait_for_request_interval()
 
     @with_auth_retry(max_retries=1)
-    async def _api_request(self, operation: str, method: str, **kwargs) -> Dict[str, Any]:
+    async def _api_request(self, operation: str, method: str, benign_codes: Optional[set] = None, **kwargs) -> Dict[str, Any]:
         if not self._session:
             raise Exception("HTTP会话未初始化")
         self._last_cookie_change_detected = False
@@ -206,7 +206,17 @@ class QuarkReverseDriver(BaseDriver):
         async with self._session.request(method, url, **kwargs) as response:
             self._last_cookie_change_detected = await self._update_cookies_from_response(response)
             response_text = await response.text()
-            
+
+            # 良性业务码（如删除时“文件已删除”）短路返回，避免把幂等结果当错误打日志/抛异常
+            if benign_codes:
+                try:
+                    import json as _json
+                    _peek = _json.loads(response_text)
+                except Exception:
+                    _peek = None
+                if isinstance(_peek, dict) and _peek.get("code") in benign_codes:
+                    return _peek
+
             if response.status >= 400:
                 self._log.error(f"API请求失败:", 
                             details={
@@ -428,6 +438,25 @@ class QuarkReverseDriver(BaseDriver):
 
         return recycle_ids
 
+    # 夸克对“删除已不存在文件”返回该业务码，等价于幂等删除成功
+    _ALREADY_DELETED_CODE = 23004
+
+    def _already_deleted_result(self, file_ids: List[str], parent_ids: set) -> OperationResult:
+        """目标文件已不存在：删除目的已达成，按成功返回，不打错误日志。"""
+        self._log.debug(
+            f"夸克网盘 {len(file_ids)} 个文件已不存在，视为删除成功",
+            driver_name="quark_reverse",
+        )
+        return OperationResult(
+            success=True,
+            message="文件已不存在，视为删除成功",
+            data={
+                "deleted_count": len(file_ids),
+                "file_ids": file_ids,
+                "parent_ids": list(parent_ids),
+            },
+        )
+
     async def _delete_files(self, file_ids: List[str]) -> OperationResult:
         """删除文件，支持回收站模式和永久删除模式。"""
         try:
@@ -464,10 +493,12 @@ class QuarkReverseDriver(BaseDriver):
                     driver_name="quark_reverse",
                 )
 
-                await self._api_request("trash", "POST", json={
+                trash_resp = await self._api_request("trash", "POST", json={
                     "filelist": file_ids,
                     "action_type": 1,
-                })
+                }, benign_codes={self._ALREADY_DELETED_CODE})
+                if isinstance(trash_resp, dict) and trash_resp.get("code") == self._ALREADY_DELETED_CODE:
+                    return self._already_deleted_result(file_ids, parent_ids)
 
                 # 状态收敛等待：移动到回收站成功后，需等待回收站记录真正可查询。
                 if self.config.operation_delay > 0:
@@ -511,10 +542,12 @@ class QuarkReverseDriver(BaseDriver):
                     driver_name="quark_reverse",
                 )
 
-                await self._api_request("trash", "POST", json={
+                trash_resp = await self._api_request("trash", "POST", json={
                     "filelist": file_ids,
                     "action_type": 1,
-                })
+                }, benign_codes={self._ALREADY_DELETED_CODE})
+                if isinstance(trash_resp, dict) and trash_resp.get("code") == self._ALREADY_DELETED_CODE:
+                    return self._already_deleted_result(file_ids, parent_ids)
 
                 # 状态收敛等待：即使仅移到回收站，也需要等待网盘列表状态稳定。
                 if self.config.operation_delay > 0:

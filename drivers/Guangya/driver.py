@@ -595,7 +595,11 @@ class GuangYaDriver(BaseDriver):
             return OperationResult(success=True, message="没有文件需要删除")
         return await self._delete_files(file_ids)
 
-    async def _delete_files(self, file_ids: List[str]) -> OperationResult:
+    async def purge_file(self, file_id: str) -> OperationResult:
+        """彻底删除（强制清空回收站），用于跨盘探测临时目录等内部清理，不受账号 delete_mode 影响。"""
+        return await self._delete_files([str(file_id or "").strip()], force_permanent=True)
+
+    async def _delete_files(self, file_ids: List[str], force_permanent: bool = False) -> OperationResult:
         normalized_file_ids = [str(file_id or "").strip() for file_id in file_ids if str(file_id or "").strip()]
         if not normalized_file_ids:
             return OperationResult(success=True, message="没有文件需要删除")
@@ -613,7 +617,7 @@ class GuangYaDriver(BaseDriver):
 
             message = f"已将 {len(normalized_file_ids)} 个文件移到回收站" if len(normalized_file_ids) > 1 else "已将文件移到回收站"
 
-            if self.config.delete_mode == "delete":
+            if self.config.delete_mode == "delete" or force_permanent:
                 recycle_map: Dict[str, Dict[str, Any]] = {}
                 for _ in range(6):
                     recycle_items = await self._list_recycle_items()
@@ -747,6 +751,71 @@ class GuangYaDriver(BaseDriver):
                 await upload_file.close()
             except Exception:
                 pass
+
+    async def _fetch_file_md5(self, file_id: str) -> str:
+        """按 fileId 走详情接口取真实整文件 md5（光鸭列表不带 md5）。"""
+        detail = await self._api_request(
+            GuangYaAPI.ENDPOINTS["file_detail"],
+            {"fileId": str(file_id or "").strip()},
+        )
+        info = (detail.get("data") or {}).get("fileInfo") or {}
+        return str(info.get("md5") or "")
+
+    async def resolve_transfer_hash(self, item: FileItem, method: str, *, allow_stream: bool = False) -> str:
+        if str(method or "").lower() != "md5":
+            return ""
+        extra = item.extra or {}
+        value = extra.get("md5")
+        if not value:
+            # 详情接口轻量，但仍仅在确需指纹时（探测/执行阶段）调用，避免扫描期逐文件请求
+            if not allow_stream:
+                return ""
+            try:
+                value = await self._fetch_file_md5(item.id)
+            except Exception as exc:
+                self._log.warning(f"光鸭获取 md5 失败 {item.name}: {exc}", driver_name="guangya")
+                return ""
+        return self.normalize_transfer_hash("md5", str(value or ""))
+
+    async def rapid_upload_by_hash(
+        self,
+        parent_id: str,
+        filename: str,
+        hash_type: str,
+        hash_value: str,
+        size: int,
+        duplicate: int = 1,
+    ) -> OperationResult:
+        if str(hash_type or "").lower() != "md5":
+            raise NotImplementedError("光鸭云盘仅支持 md5 秒传")
+        md5 = self.normalize_transfer_hash("md5", hash_value)
+        if not md5:
+            return OperationResult(success=False, message="无效的 MD5 指纹")
+
+        resolved_parent_id = self._resolve_parent_id(parent_id)
+        token_data, code = await self._get_upload_token(resolved_parent_id, filename, int(size or 0))
+        task_id = str(token_data.get("taskId") or "").strip()
+        if not task_id:
+            return OperationResult(success=False, message="未获取到上传任务ID")
+
+        # 服务端偶发直接判定秒传（无需提交指纹）
+        if code == 156:
+            file_id = await self._wait_upload_task_info(task_id)
+            return OperationResult(success=True, message="秒传命中", data={
+                "reuse": True, "file_id": file_id, "parent_id": resolved_parent_id,
+            })
+
+        check = await self._api_request(
+            GuangYaAPI.ENDPOINTS["check_can_flash_upload"],
+            {"taskId": task_id, "md5": md5},
+        )
+        if not bool((check.get("data") or {}).get("canFlashUpload")):
+            return OperationResult(success=True, message="未命中秒传", data={"reuse": False})
+
+        file_id = await self._wait_upload_task_info(task_id)
+        return OperationResult(success=True, message="秒传命中", data={
+            "reuse": True, "file_id": file_id, "parent_id": resolved_parent_id,
+        })
 
     @auto_cleanup_cache("upload_file")
     async def upload_local_file(
@@ -1231,12 +1300,16 @@ class GuangYaDriver(BaseDriver):
         return resource
 
     def _calc_upload_part_size(self, size: int) -> int:
+        # 分片串行上传，片越小请求次数越多、签名/往返开销越大。OSS 限制：单片 100KB~5GB、
+        # 最多 10000 片，故在限制内尽量用大分片以减少请求数（128MB 上限可覆盖到 ~1.25TB）。
         mb = 1024 * 1024
         gb = 1024 * 1024 * 1024
-        if size <= 100 * mb:
-            return 1 * mb
-        if size <= 16 * gb:
-            return 2 * mb
-        if size <= 160 * gb:
-            return 4 * mb
-        return 8 * mb
+        if size <= 16 * mb:
+            return 16 * mb
+        if size <= 4 * gb:
+            return 16 * mb
+        if size <= 32 * gb:
+            return 32 * mb
+        if size <= 128 * gb:
+            return 64 * mb
+        return 128 * mb

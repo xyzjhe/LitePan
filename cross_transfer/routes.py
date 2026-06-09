@@ -17,6 +17,8 @@ def _pan_meta(info: Dict) -> Dict:
         "name": info.get("display_name") or info.get("card_name") or info.get("name"),
         "logo": info.get("card_logo") or "",
         "color": info.get("card_color") or "",
+        # 上传冲突策略能力：默认支持改名+覆盖；不支持某项的驱动在 DRIVER_INFO 显式声明（如光鸭只会自动改名）
+        "conflict_policies": list(info.get("upload_conflict_policies") or ["rename", "overwrite"]),
     }
 
 

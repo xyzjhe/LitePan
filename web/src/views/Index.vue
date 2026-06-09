@@ -310,23 +310,29 @@
                     <div class="upload-task-title-row">
                       <span class="upload-task-name" :title="task.file_name">{{ task.file_name }}</span>
                       <span
-                        v-if="['success', 'skipped'].includes(task.status)"
+                        v-if="['success', 'skipped', 'failed', 'canceled'].includes(task.status)"
                         class="upload-task-status"
                         :class="`status-${task.status}`"
                       >
                         {{ getUploadTaskStatusText(task.status) }}
                       </span>
                     </div>
-                    <div v-if="shouldShowUploadTaskProgressBar(task)" class="upload-task-progress-bar">
-                      <div class="upload-task-progress-inner" :style="{ width: `${task.progress || 0}%` }"></div>
-                    </div>
-                    <div v-if="!['success', 'skipped', 'failed'].includes(task.status)" class="upload-task-meta">
-                      <span class="upload-task-meta-message">{{ getUploadTaskMessage(task) }}</span>
-                      <span v-if="getUploadTaskSpeedText(task)" class="upload-task-speed">{{ getUploadTaskSpeedText(task) }}</span>
-                      <span v-if="shouldShowUploadTaskMetaPercent(task)">{{ task.progress || 0 }}%</span>
+                    <div v-if="isUploadTaskActive(task)" class="upload-task-meta">
+                      <span class="task-phase-pill is-upload">
+                        <span class="phase-dot"></span>{{ getUploadTaskPhaseLabel(task) }}
+                      </span>
+                      <span v-if="getUploadTaskSpeedText(task)" class="task-chip is-speed">{{ getUploadTaskSpeedText(task) }}</span>
+                      <span v-if="formatUploadPart(task)" class="task-chip">{{ formatUploadPart(task) }}</span>
+                      <span v-if="shouldShowUploadTaskMetaPercent(task)" class="task-chip is-percent">{{ task.progress || 0 }}%</span>
                     </div>
                     <div v-if="task.error" class="upload-task-error">{{ task.error }}</div>
                   </div>
+                </div>
+                <div
+                  v-if="shouldShowUploadTaskHairline(task)"
+                  class="upload-task-hairline"
+                >
+                  <div class="upload-task-progress-inner" :style="{ width: `${task.progress || 0}%` }"></div>
                 </div>
                 <div class="upload-task-item-actions">
                   <button
@@ -407,25 +413,34 @@
                       :title="getRelayTaskDriverBadge(task).title"
                       size="badge"
                     />
-                    <div class="upload-task-file-info">
+                    <div
+                      class="upload-task-file-info"
+                      :title="`${task.source_account_name || '源盘'} → ${task.target_account_name || '目标盘'}${task.target_display_path ? ' · ' + task.target_display_path : ''}`"
+                    >
                       <div class="upload-task-title-row">
                         <span class="upload-task-name" :title="task.file_name">{{ task.file_name }}</span>
-                        <span class="upload-task-status" :class="`status-${task.status}`">{{ getRelayStatusText(task) }}</span>
+                        <span
+                          v-if="['success', 'failed', 'canceled'].includes(task.status)"
+                          class="upload-task-status"
+                          :class="`status-${task.status}`"
+                        >{{ getRelayStatusText(task) }}</span>
                       </div>
-                      <div class="upload-task-meta relay-route">
-                        {{ task.source_account_name || '源盘' }} → {{ task.target_account_name || '目标盘' }}
-                        <span v-if="task.target_display_path"> · {{ task.target_display_path }}</span>
-                      </div>
-                      <div v-if="shouldShowRelayTaskProgressBar(task)" class="upload-task-progress-bar">
-                        <div class="upload-task-progress-inner" :style="{ width: `${task.progress || 0}%` }"></div>
-                      </div>
-                      <div v-if="!['success', 'failed', 'canceled'].includes(task.status)" class="upload-task-meta">
-                        <span class="upload-task-meta-message">{{ task.message }}</span>
-                        <span v-if="formatRelaySpeed(task)" class="upload-task-speed">{{ formatRelaySpeed(task) }}</span>
-                        <span v-if="shouldShowRelayTaskMetaPercent(task)">{{ task.progress || 0 }}%</span>
+                      <div v-if="isRelayTaskActive(task)" class="upload-task-meta">
+                        <span class="task-phase-pill" :class="task.phase === 'downloading' ? 'is-download' : 'is-upload'">
+                          <span class="phase-dot"></span>{{ getRelayPhaseLabel(task) }}
+                        </span>
+                        <span v-if="formatRelaySpeed(task)" class="task-chip is-speed">{{ formatRelaySpeed(task) }}</span>
+                        <span v-if="formatRelayPart(task)" class="task-chip">{{ formatRelayPart(task) }}</span>
+                        <span v-if="shouldShowRelayTaskMetaPercent(task)" class="task-chip is-percent">{{ task.progress || 0 }}%</span>
                       </div>
                       <div v-if="task.error" class="upload-task-error">{{ task.error }}</div>
                     </div>
+                  </div>
+                  <div
+                    v-if="shouldShowRelayTaskHairline(task)"
+                    class="upload-task-hairline"
+                  >
+                    <div class="upload-task-progress-inner" :style="{ width: `${task.progress || 0}%` }"></div>
                   </div>
                   <div class="upload-task-item-actions">
                     <button
@@ -518,6 +533,7 @@ const {
   batchDeleteRelayTasks,
   getRelayStatusText,
   formatRelaySpeed,
+  formatRelayPart,
 } = useCrossRelayTasks()
 const uploadTaskPanelLoading = ref(false)
 const uploadTaskPanelLoadingText = ref('正在准备上传任务...')
@@ -907,6 +923,13 @@ const getUploadTaskMessage = (task) => {
   return task.message || '-'
 }
 
+// 各驱动上传消息统一含“分片（x/y）”，运行中时单独提取展示；无分片信息返回空
+const formatUploadPart = (task) => {
+  if (String(task?.status || '') !== 'running') return ''
+  const m = String(task?.message || '').match(/分片[（(]\s*(\d+)\s*\/\s*(\d+)\s*[)）]/)
+  return m ? `分片 ${m[1]}/${m[2]}` : ''
+}
+
 const formatUploadSpeed = (bytesPerSecond) => {
   const speed = Number(bytesPerSecond || 0)
   if (!Number.isFinite(speed) || speed <= 0) {
@@ -1097,13 +1120,29 @@ const shouldShowUploadTaskProgressBar = (task) => {
   return !['pending', 'canceled', 'success', 'skipped'].includes(status) && hasStartedUploadTask(task)
 }
 
-const shouldShowUploadTaskMetaPercent = (task) => shouldShowUploadTaskProgressBar(task)
+// 本机→服务器(pending)与服务器→网盘(running)都显示百分比；发丝条仅后者
+const shouldShowUploadTaskMetaPercent = (task) => {
+  const status = String(task?.status || '')
+  if (['canceled', 'success', 'skipped'].includes(status)) return false
+  if (status === 'pending' && isLocalUploadTask(task)) return true
+  return shouldShowUploadTaskProgressBar(task)
+}
 
-const shouldShowRelayTaskProgressBar = (task) => {
-  if (['success', 'failed', 'canceled'].includes(String(task?.status || ''))) {
-    return false
+const shouldShowUploadTaskHairline = (task) => String(task?.status || '') === 'running'
+
+const isUploadTaskActive = (task) => ['pending', 'running', 'paused'].includes(String(task?.status || ''))
+
+// 第二行相位胶囊文案：本机→服务器、服务器→网盘、暂停等
+const getUploadTaskPhaseLabel = (task) => {
+  const status = String(task?.status || '')
+  if (status === 'paused') return '已暂停'
+  if (status === 'running') return '上传到网盘'
+  if (status === 'pending') {
+    if (isRemoteTaskWaitingResume(task)) return '等待继续'
+    if (isSendingToLitePanServerTask(task)) return '发送至服务器'
+    return '等待中'
   }
-  return task?.phase === 'uploading'
+  return getUploadTaskStatusText(status)
 }
 
 const shouldShowRelayTaskMetaPercent = (task) => {
@@ -1111,6 +1150,20 @@ const shouldShowRelayTaskMetaPercent = (task) => {
     return false
   }
   return task?.phase === 'downloading' || task?.phase === 'uploading'
+}
+
+const shouldShowRelayTaskHairline = (task) => {
+  if (['success', 'failed', 'canceled'].includes(String(task?.status || ''))) return false
+  return task?.phase === 'uploading'
+}
+
+const isRelayTaskActive = (task) => !['success', 'failed', 'canceled'].includes(String(task?.status || ''))
+
+// 第二行相位胶囊文案：源盘下载中 / 目标盘上传中
+const getRelayPhaseLabel = (task) => {
+  if (task?.phase === 'downloading') return '源盘下载中'
+  if (task?.phase === 'uploading') return '目标盘上传中'
+  return '等待中'
 }
 
 const shouldSkipUploadNotice = () => {
@@ -4387,20 +4440,23 @@ onUnmounted(() => {
 }
 
 .upload-task-item {
+  position: relative;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 14px;
-  padding: 14px 4px;
-  border-top: 1px solid #eef2f7;
+  padding: 12px 10px 13px;
+  border-radius: 10px;
+  transition: background 0.15s ease;
 }
 
-.upload-task-item:first-child {
-  border-top: 1px solid #eef2f7;
+.upload-task-item:hover {
+  background: #f5f7fb;
 }
 
 .upload-task-item.completed {
   align-items: center;
+  padding: 12px 10px;
 }
 
 .upload-task-item-main {
@@ -4420,8 +4476,8 @@ onUnmounted(() => {
 }
 
 .upload-task-file-icon {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -4457,9 +4513,10 @@ onUnmounted(() => {
 
 .upload-task-name {
   flex: 1;
-  font-size: 14px;
+  font-size: 13px;
   color: #111827;
   font-weight: 500;
+  line-height: 1.3;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -4468,9 +4525,9 @@ onUnmounted(() => {
 
 .upload-task-status {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: 11px;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: 6px;
   background: #e5e7eb;
   color: #4b5563;
 }
@@ -4511,14 +4568,6 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
-.upload-task-progress-bar {
-  margin-top: 10px;
-  height: 8px;
-  background: #e5e7eb;
-  border-radius: 999px;
-  overflow: hidden;
-}
-
 .upload-task-progress-inner {
   height: 100%;
   background: linear-gradient(90deg, #3b82f6, #06b6d4);
@@ -4526,35 +4575,89 @@ onUnmounted(() => {
   transition: width 0.25s ease;
 }
 
-.upload-task-meta {
-  margin-top: 8px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  font-size: 12px;
-  color: #475569;
-}
-
-.upload-task-meta.relay-route {
-  font-size: 12px;
-  color: #64748b;
-  margin-bottom: 4px;
-}
-
-.upload-task-meta-message {
-  min-width: 0;
-  flex: 1;
+.upload-task-hairline {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 7px;
+  height: 3px;
+  background: #e5e7eb;
+  border-radius: 999px;
   overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.upload-task-meta {
+  margin-top: 5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #475569;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.task-phase-pill {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  height: 18px;
+  border-radius: 6px;
+  background: #eaf1ff;
+  color: #2563eb;
   white-space: nowrap;
 }
 
-.upload-task-speed {
+.task-phase-pill.is-download {
+  background: #fff1e2;
+  color: #c2410c;
+}
+
+.task-phase-pill.is-upload {
+  background: #eaf1ff;
+  color: #2563eb;
+}
+
+.task-phase-pill .phase-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: taskPhasePulse 1.1s ease-in-out infinite;
+}
+
+@keyframes taskPhasePulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.75); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+.task-chip {
   flex-shrink: 0;
+  font-size: 10px;
+  padding: 1px 7px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-chip.is-speed {
+  background: #eaf1ff;
   color: #2563eb;
   font-weight: 600;
-  font-variant-numeric: tabular-nums;
+}
+
+.task-chip.is-percent {
+  background: #eef2f7;
+  color: #475569;
+  font-weight: 600;
 }
 
 .upload-task-error {
@@ -4571,6 +4674,13 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   align-self: center;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.upload-task-item:hover .upload-task-item-actions,
+.upload-task-item:focus-within .upload-task-item-actions {
+  opacity: 1;
 }
 
 .task-row-btn {

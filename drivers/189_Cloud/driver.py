@@ -933,7 +933,7 @@ class Cloud189Driver(BaseDriver):
             progress_callback,
             min(total_size, base_uploaded + size),
             total_size,
-            f"正在上传分片 {part_number}/{total_parts}",
+            f"正在上传到天翼云盘，分片（{part_number}/{total_parts}）",
         )
 
     @auto_cleanup_cache("upload_file")

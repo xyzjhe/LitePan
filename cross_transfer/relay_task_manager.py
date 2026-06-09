@@ -14,8 +14,6 @@ from cross_transfer.relay import download_source_to_file, upload_temp_to_target
 
 _LEGACY_TEMP_DIR = os.path.join("data", "cross_transfer")
 
-_DOWNLOAD_PHASE_MAX = 45
-
 
 @dataclass
 class RelayTask:
@@ -186,12 +184,13 @@ class RelayTaskManager:
 
             async def on_download(downloaded: int, total: int, message: str, speed: float):
                 total = int(total or task.total_bytes or 0)
-                progress = int(downloaded / total * _DOWNLOAD_PHASE_MAX) if total else 0
+                # 下载与上传各自独立计 0-100，前端两段进度分别铺满，不再拼接
+                progress = int(downloaded / total * 100) if total else 0
                 await self._update(
                     task_id,
                     phase="downloading",
                     downloaded_bytes=downloaded,
-                    progress=min(_DOWNLOAD_PHASE_MAX, progress),
+                    progress=min(100, progress),
                     speed_bytes_per_second=speed,
                     message=message,
                 )
@@ -210,7 +209,7 @@ class RelayTaskManager:
                 task_id,
                 phase="uploading",
                 downloaded_bytes=downloaded,
-                progress=_DOWNLOAD_PHASE_MAX,
+                progress=0,
                 speed_bytes_per_second=0.0,
                 message="正在上传到目标盘",
             )
@@ -220,7 +219,7 @@ class RelayTaskManager:
             async def on_upload(uploaded: int, total: int, message: str, speed: float = 0.0):
                 total = int(total or task.total_bytes or 0)
                 ratio = (uploaded / total) if total else 0
-                progress = _DOWNLOAD_PHASE_MAX + int(ratio * (100 - _DOWNLOAD_PHASE_MAX))
+                progress = int(ratio * 100)
                 await self._update(
                     task_id,
                     phase="uploading",

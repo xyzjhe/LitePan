@@ -199,13 +199,17 @@ async def _download_range_part(
             body = await resp.text(errors="ignore")
             raise RuntimeError(f"源盘分片下载失败 HTTP {resp.status}: {body[:200]}")
 
-        data = await resp.read()
-        if data:
+        # 流式写盘：分片可达数 GB，整段读入内存会在大文件并发时打爆内存并导致进度长时间停在 0%
+        pos = start
+        async for chunk in resp.content.iter_chunked(1024 * 256):
+            if not chunk:
+                continue
             async with io_lock:
-                fp.seek(start)
-                fp.write(data)
-            written = len(data)
-            await progress.add(written)
+                fp.seek(pos)
+                fp.write(chunk)
+            pos += len(chunk)
+            written += len(chunk)
+            await progress.add(len(chunk))
     finally:
         resp.release()
 

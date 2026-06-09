@@ -1501,6 +1501,39 @@
     color: rgba(226, 232, 240, 0.82) !important;
 }
 
+:root[data-theme="dark"] .index-page .upload-task-item:hover {
+    background: rgba(148, 163, 184, 0.1) !important;
+}
+
+:root[data-theme="dark"] .index-page .task-phase-pill.is-upload {
+    background: rgba(59, 130, 246, 0.22) !important;
+    color: #93c5fd !important;
+}
+
+:root[data-theme="dark"] .index-page .task-phase-pill.is-download {
+    background: rgba(245, 158, 11, 0.2) !important;
+    color: #fcd34d !important;
+}
+
+:root[data-theme="dark"] .index-page .task-chip {
+    background: rgba(148, 163, 184, 0.16) !important;
+    color: rgba(226, 232, 240, 0.85) !important;
+}
+
+:root[data-theme="dark"] .index-page .task-chip.is-speed {
+    background: rgba(59, 130, 246, 0.22) !important;
+    color: #93c5fd !important;
+}
+
+:root[data-theme="dark"] .index-page .task-chip.is-percent {
+    background: rgba(148, 163, 184, 0.2) !important;
+    color: #e5edf8 !important;
+}
+
+:root[data-theme="dark"] .index-page .upload-task-hairline {
+    background: rgba(148, 163, 184, 0.16) !important;
+}
+
 :root[data-theme="dark"] .index-page .upload-task-loading-state,
 :root[data-theme="dark"] .index-page .upload-task-loading-text,
 :root[data-theme="dark"] .index-page .upload-task-empty {

@@ -12,6 +12,7 @@ class GuangYaAPI:
         "file_detail": "/userres/v1/file/get_file_detail",
         "download_url": "/userres/v1/get_res_download_url",
         "upload_token": "/userres/v1/get_res_center_token",
+        "check_can_flash_upload": "/userres/v1/check_can_flash_upload",
         "upload_task_info": "/userres/v1/file/get_info_by_task_id",
         "create_dir": "/userres/v1/file/create_dir",
         "rename": "/userres/v1/file/rename",

@@ -9,14 +9,13 @@
         :class="{ active: activeId === r.id }"
         @click="selectRoute(r)"
       >
-        <span v-if="r.bidirectional" class="fc-flag">双向</span>
         <div class="fc-body">
           <div class="fc-slot">
             <div class="fc-link">
               <span class="fc-logo"><img :src="r.from.logo" :alt="r.from.name" @error="hideImg"></span>
               <div class="fc-pulse-track">
                 <span v-if="r.bidirectional" class="fc-tri fc-tri-both">
-                  <i class="fas fa-right-left"></i>
+                  <i class="fas fa-arrows-rotate"></i>
                 </span>
                 <span v-else class="fc-tri">
                   <i class="fas fa-chevron-right"></i>
@@ -33,6 +32,7 @@
             <span class="fc-pill" :class="{ md5: r.method === 'md5' }">
               <i class="fas fa-fingerprint"></i>
               <span>{{ r.method_label }}</span>
+              <span v-if="r.bidirectional" class="biflag">双向</span>
             </span>
           </div>
         </div>
@@ -220,16 +220,26 @@
                       <button
                         type="button"
                         class="ct-settings-opt"
-                        :class="{ active: conflict === 'rename' }"
-                        @click="conflict = 'rename'"
+                        :class="{ active: effectiveConflict === 'rename' }"
+                        :disabled="targetRenameUnsupported"
+                        :title="targetRenameUnsupported ? `${dstName}不支持自动重命名` : ''"
+                        @click="targetRenameUnsupported ? null : (conflict = 'rename')"
                       >自动重命名</button>
                       <button
                         type="button"
                         class="ct-settings-opt"
-                        :class="{ active: conflict === 'overwrite' }"
-                        @click="conflict = 'overwrite'"
+                        :class="{ active: effectiveConflict === 'overwrite' }"
+                        :disabled="targetOverwriteUnsupported"
+                        :title="targetOverwriteUnsupported ? `${dstName}不支持覆盖` : ''"
+                        @click="targetOverwriteUnsupported ? null : (conflict = 'overwrite')"
                       >覆盖</button>
                     </div>
+                    <p v-if="targetOverwriteUnsupported" class="ct-settings-fallback-hint">
+                      {{ dstName }}不支持覆盖，同名文件将自动重命名。
+                    </p>
+                    <p v-else-if="targetRenameUnsupported" class="ct-settings-fallback-hint">
+                      {{ dstName }}不支持自动重命名，同名文件将被覆盖。
+                    </p>
                   </div>
                   <div class="ct-settings-block">
                     <div class="ct-settings-label">兜底传输</div>
@@ -255,11 +265,23 @@
               </div>
             </Teleport>
           </div>
-          <button class="ct-btn ct-btn-primary" :disabled="!canProbe" @click="probe">
-            <i class="fas fa-magnifying-glass"></i> {{ running === 'probe' ? '试探中…' : '试探秒传' }}
+          <button
+            class="ct-btn"
+            :class="running === 'probe' ? 'ct-btn-danger' : 'ct-btn-primary'"
+            :disabled="running === 'probe' ? false : !canProbe"
+            @click="running === 'probe' ? stopRun() : probe()"
+          >
+            <i :class="running === 'probe' ? 'fas fa-stop' : 'fas fa-magnifying-glass'"></i>
+            {{ running === 'probe' ? '停止试探' : '试探秒传' }}
           </button>
-          <button class="ct-btn ct-btn-go" :disabled="!canStart" @click="start">
-            <i class="fas fa-bolt"></i> {{ running === 'exec' ? '传输中…' : '开始传输' }}
+          <button
+            class="ct-btn"
+            :class="running === 'exec' ? 'ct-btn-danger' : 'ct-btn-go'"
+            :disabled="running === 'exec' ? false : !canStart"
+            @click="running === 'exec' ? stopRun() : start()"
+          >
+            <i :class="running === 'exec' ? 'fas fa-stop' : 'fas fa-bolt'"></i>
+            {{ running === 'exec' ? '停止' : '开始传输' }}
           </button>
         </div>
       </div>
@@ -310,6 +332,7 @@ const SETTINGS_DROPDOWN_WIDTH = 296
 const footerTipIndex = ref(0)
 let footerTipTimer = null
 const running = ref('')      // '' | 'probe' | 'exec'
+const abortCtrl = ref(null)  // 中断试探/传输的流式请求（含扫描阶段）
 const barWidth = ref(0)
 const metrics = reactive({ total: 0, ok: 0, no: 0, done: 0 })
 const relayNotice = ref(null)
@@ -341,6 +364,26 @@ const dstDriver = computed(() => {
 })
 const srcPan = computed(() => panOf(srcDriver.value))
 const dstPan = computed(() => panOf(dstDriver.value))
+
+// 目标盘支持的上传冲突策略（后端 _pan_meta 按驱动能力下发，默认 rename+overwrite）。
+// 双向线路按当前换向后的真实目标取值。
+const dstMeta = computed(() => {
+  if (!curRoute.value) return null
+  return swapped.value ? curRoute.value.from : curRoute.value.to
+})
+const dstName = computed(() => dstMeta.value?.name || '目标盘')
+const dstConflictPolicies = computed(() => {
+  const p = dstMeta.value?.conflict_policies
+  return Array.isArray(p) && p.length ? p : ['rename', 'overwrite']
+})
+const targetOverwriteUnsupported = computed(() => !dstConflictPolicies.value.includes('overwrite'))
+const targetRenameUnsupported = computed(() => !dstConflictPolicies.value.includes('rename'))
+// 用户选了目标盘不支持的策略时，自动落到其支持的另一项再下发。
+const effectiveConflict = computed(() => {
+  if (conflict.value === 'overwrite' && targetOverwriteUnsupported.value) return 'rename'
+  if (conflict.value === 'rename' && targetRenameUnsupported.value) return 'overwrite'
+  return conflict.value
+})
 
 const canProbe = computed(() => !!src.value && !!dst.value && !running.value)
 const canStart = computed(() => !!src.value && !!dst.value && !!curRoute.value && !running.value)
@@ -516,6 +559,12 @@ function swap() {
   notify('success', `已交换方向：${srcPan.value.name} → ${dstPan.value.name}`)
 }
 
+// 中断进行中的试探/传输：abort 会让扫描 axios 与流式 fetch 抛出，由各自 catch 处理
+function stopRun() {
+  if (!running.value) return
+  try { abortCtrl.value?.abort() } catch { /* 忽略 */ }
+}
+
 // ===== 选择账号 + 目录（复用 FolderSelectorModal）=====
 async function openPicker(mode) {
   const driver = mode === 'src' ? srcDriver.value : dstDriver.value
@@ -573,7 +622,7 @@ async function scanSource(clearTree = true) {
       source_parent_id: src.value.parentId,
       source_display_path: src.value.path || '',
       method: curRoute.value.method,
-    })
+    }, { signal: abortCtrl.value?.signal })
     if (!resp.data || !resp.data.success) {
       notify('error', resp.data?.message || '扫描失败')
       return null
@@ -593,6 +642,7 @@ async function scanSource(clearTree = true) {
     if (running.value) phaseStatus.value = ''
     return scan
   } catch (e) {
+    if (axios.isCancel?.(e) || e?.name === 'CanceledError') return null
     notify('error', '扫描失败: ' + (e.response?.data?.message || e.message))
     return null
   } finally {
@@ -605,6 +655,7 @@ async function probe() {
   if (!src.value || !dst.value || !curRoute.value) return
   if (!(await confirmProbeNotice())) return
   running.value = 'probe'
+  abortCtrl.value = new AbortController()
   barWidth.value = 8
 
   const scan = await scanSource(true)
@@ -627,11 +678,13 @@ async function probe() {
   }
 
   let processed = 0
+  const probeErrors = new Set()
   try {
     const resp = await fetch('/api/cross-transfer/probe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
+      signal: abortCtrl.value?.signal,
       body: JSON.stringify({
         source_account_id: src.value.accId,
         target_account_id: dst.value.accId,
@@ -684,6 +737,7 @@ async function probe() {
           }
           const f = fileMap[relPath]
           if (f) f.reuse = msg.reuse
+          if (msg.error) probeErrors.add(msg.error)
           if (msg.reuse) metrics.ok++; else metrics.no++
           processed++
           barWidth.value = metrics.total ? Math.round(processed / metrics.total * 100) : 0
@@ -700,10 +754,17 @@ async function probe() {
         }
       }
     }
-    notify('success', `试探完成，可秒传 ${metrics.ok}/${metrics.total}`)
+    if (probeErrors.size) {
+      const detail = Array.from(probeErrors).slice(0, 2).join('；')
+      notify('warning', `目标盘试探报错：${detail}（可秒传 ${metrics.ok}/${metrics.total}，其余可能为未命中或受目标盘限制）`)
+    } else {
+      notify('success', `试探完成，可秒传 ${metrics.ok}/${metrics.total}`)
+    }
   } catch (e) {
-    notify('error', '试探失败: ' + (e.message || e))
+    if (e?.name === 'AbortError') notify('warning', '已停止试探')
+    else notify('error', '试探失败: ' + (e.message || e))
   } finally {
+    abortCtrl.value = null
     clearAllRun()
     phaseStatus.value = ''
     running.value = ''
@@ -716,6 +777,7 @@ async function start() {
   if (!src.value || !dst.value || !curRoute.value) return
   clearRelayNotice()
   running.value = 'exec'
+  abortCtrl.value = new AbortController()
   barWidth.value = 12
 
   if (!probeFiles.value.length) {
@@ -755,6 +817,7 @@ async function start() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
+      signal: abortCtrl.value?.signal,
       body: JSON.stringify({
         source_account_id: src.value.accId,
         source_account_name: src.value.accName,
@@ -773,7 +836,7 @@ async function start() {
           size: f.size,
           hash: f.hash,
         })),
-        conflict: conflict.value,
+        conflict: effectiveConflict.value,
         fallback: fallback.value === 'on',
       }),
     })
@@ -855,8 +918,10 @@ async function start() {
       }
     }
   } catch (e) {
-    notify('error', '传输失败: ' + (e.message || e))
+    if (e?.name === 'AbortError') notify('warning', '已停止传输（已处理的文件保留，未处理的已中止）')
+    else notify('error', '传输失败: ' + (e.message || e))
   } finally {
+    abortCtrl.value = null
     clearAllRun()
     phaseStatus.value = ''
     running.value = ''
@@ -1073,7 +1138,7 @@ onUnmounted(() => {
   min-height: 20px; padding: 0 4px;
 }
 .fc-tri { display: inline-flex; align-items: center; gap: 2px; }
-.fc-tri i { font-size: 7px; color: var(--primary-color); line-height: 1; opacity: .38; }
+.fc-tri i { font-size: 8px; color: var(--primary-color); line-height: 1; opacity: .35; display: inline-block; }
 .flow-card.active .fc-tri:not(.fc-tri-both):not(.fc-tri-plain) i:nth-child(1) {
   animation: fc-tri-blink 2s ease-in-out infinite;
 }
@@ -1090,11 +1155,12 @@ onUnmounted(() => {
   animation: fc-tri-blink 2s ease-in-out .48s infinite;
 }
 @keyframes fc-tri-blink {
-  0%, 100% { opacity: .38; }
-  40%, 60% { opacity: .78; }
+  0%, 100% { opacity: .3; transform: scale(.85); }
+  45%, 55% { opacity: 1; transform: scale(1.2); }
 }
-.fc-tri-both i { font-size: 9px; color: #7c3aed; opacity: .45; }
-.flow-card.active .fc-tri-both i { opacity: .68; }
+.fc-tri-both i { font-size: 11px; color: #7c3aed; opacity: .6; display: inline-block; }
+.flow-card.active .fc-tri-both i { opacity: .9; animation: fc-both-spin 2.6s linear infinite; }
+@keyframes fc-both-spin { to { transform: rotate(360deg); } }
 .fc-tri-plain i { font-size: 9px; color: var(--text-secondary); opacity: .42; }
 .fc-meta { width: 100%; }
 .fc-pill {
@@ -1107,7 +1173,7 @@ onUnmounted(() => {
 .fc-pill.muted { background: var(--app-bg); color: var(--text-secondary); justify-content: space-between; }
 .fc-pill-left { display: inline-flex; align-items: center; gap: 5px; }
 .fc-soon { font-size: 10px; color: var(--text-secondary); }
-.fc-flag { position: absolute; top: 8px; right: 8px; font-size: 10px; font-weight: 700; letter-spacing: .3px; padding: 2px 7px; border-radius: 999px; background: rgba(124,58,237,.12); color: #7c3aed; }
+.biflag { font-size: 9px; font-weight: 700; color: #7c3aed; background: rgba(124,58,237,.14); padding: 1px 6px; border-radius: 999px; margin-left: 2px; }
 
 /* logo 徽标 */
 .logo-chip { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
@@ -1162,14 +1228,17 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 3px;
   flex-shrink: 0;
   padding: 0 4px;
+  /* 单向/双向卡片高度一致，避免切换时行高跳动（双向多出“可交换”一行） */
+  min-height: 46px;
 }
 .tb-flow {
-  width: 30px;
-  height: 30px;
-  border-radius: 999px;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
   display: grid;
   place-items: center;
   font-size: 12px;
@@ -1178,24 +1247,23 @@ onUnmounted(() => {
   border: 1px solid rgba(76,116,223,.14);
 }
 .tb-swap {
-  width: 30px;
-  height: 30px;
-  border-radius: 999px;
-  border: 1px solid rgba(124,58,237,.28);
-  background: linear-gradient(135deg, rgba(124,58,237,.12), rgba(76,116,223,.1));
-  color: #7c3aed;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid rgba(76,116,223,.14);
+  background: rgba(76,116,223,.08);
+  color: var(--primary-color);
   font-size: 12px;
   cursor: pointer;
   display: grid;
   place-items: center;
-  transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+  transition: background .2s ease, border-color .2s ease;
 }
 .tb-swap:hover {
-  transform: rotate(180deg);
-  border-color: rgba(124,58,237,.45);
-  box-shadow: 0 4px 14px rgba(124,58,237,.22);
+  background: rgba(76,116,223,.16);
+  border-color: rgba(76,116,223,.3);
 }
-.tb-swap-hint { font-size: 10px; color: #7c3aed; white-space: nowrap; line-height: 1; }
+.tb-swap-hint { font-size: 10px; color: var(--text-secondary); white-space: nowrap; line-height: 1; }
 .transfer-body { display: grid; grid-template-columns: 1fr 1fr; align-items: stretch; }
 .panel { background: var(--card-bg); min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
 .panel.src { border-right: 1px solid var(--border-color); }
@@ -1470,6 +1538,10 @@ onUnmounted(() => {
   background: var(--card-bg);
   color: var(--primary-color);
   box-shadow: 0 1px 4px rgba(15,23,42,.08);
+}
+.ct-settings-opt:disabled {
+  cursor: not-allowed;
+  opacity: .45;
 }
 .ct-settings-fallback-hint {
   margin: 0;

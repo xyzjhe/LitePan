@@ -200,6 +200,7 @@ async def probe_stream(
                 if file_hash:
                     f["hash"] = file_hash
             reuse = False
+            probe_error = ""
             if file_hash:
                 try:
                     result = await tgt.rapid_upload_by_hash(
@@ -207,24 +208,32 @@ async def probe_stream(
                     )
                     reuse = bool(result.data and result.data.get("reuse"))
                 except Exception as exc:
+                    probe_error = str(exc)
                     _log().warning(f"跨盘秒传试探失败 {f.get('name')}: {exc}")
                     reuse = False
             if reuse:
                 ok += 1
             else:
                 no += 1
-            yield {"event": "item", "rel_path": rel_path, "reuse": reuse, "hash": file_hash}
+            # probe_error 区分“目标盘报错（如上传流量超限）”与“正常未命中”，供前端提示
+            yield {"event": "item", "rel_path": rel_path, "reuse": reuse, "hash": file_hash, "error": probe_error}
 
         yield {"event": "end", "ok": ok, "no": no}
     finally:
         if probe_folder_id:
             try:
-                await tgt.delete_file(probe_folder_id)
+                await tgt.purge_file(probe_folder_id)
             except Exception as exc:
                 _log().warning(f"清理临时探测目录失败 {probe_folder_id}: {exc}")
 
 
-async def _ensure_target_dir(driver, root_id: str, rel_dir: str, cache: Dict[str, str]) -> str:
+async def _ensure_target_dir(
+    driver,
+    root_id: str,
+    rel_dir: str,
+    cache: Dict[str, str],
+    created_dirs: Optional[List[str]] = None,
+) -> str:
     if rel_dir in cache:
         return cache[rel_dir]
 
@@ -247,6 +256,8 @@ async def _ensure_target_dir(driver, root_id: str, rel_dir: str, cache: Dict[str
             cur = str((created.data or {}).get("folder_id") or "")
             if not cur:
                 raise RuntimeError(f"创建目录失败: {part}")
+            if created_dirs is not None:
+                created_dirs.append(cur)
         cache[cur_rel] = cur
     cache[rel_dir] = cur
     return cur
@@ -270,6 +281,7 @@ async def _execute_transfer_file(
     target_display_path: str,
     conflict: str,
     relay_task_manager,
+    dir_cache_created: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     name = f.get("name")
     file_hash = str(f.get("hash") or "").strip().lower()
@@ -289,7 +301,7 @@ async def _execute_transfer_file(
             "error": "缺少指纹",
         }
     try:
-        folder_id = await _ensure_target_dir(tgt, target_parent_id, rel_dir, dir_cache)
+        folder_id = await _ensure_target_dir(tgt, target_parent_id, rel_dir, dir_cache, dir_cache_created)
         result = await tgt.rapid_upload_by_hash(
             folder_id, name, method_id, file_hash, int(f.get("size") or 0), duplicate=duplicate,
         )
@@ -371,6 +383,7 @@ async def execute_stream(
     tgt = await get_account_driver_instance(target_account_id)
     duplicate = 2 if str(conflict).lower() == "overwrite" else 1
     dir_cache: Dict[str, str] = {"": target_parent_id}
+    dir_cache_created: List[str] = []
     results: List[Dict] = []
     relay_queued = 0
 
@@ -394,11 +407,23 @@ async def execute_stream(
             target_display_path=target_display_path,
             conflict=conflict,
             relay_task_manager=relay_task_manager,
+            dir_cache_created=dir_cache_created,
         )
         results.append(item)
         if item.get("mode") == "relay":
             relay_queued += 1
         yield {"event": "item", **item}
+
+    # 未开兜底时，未命中文件不会写入目标，清理本次新建却仍为空的目录（深层优先）。
+    # 开了兜底时不清理：未命中会异步中转落地，目录稍后会被填充。
+    if not fallback and dir_cache_created:
+        for folder_id in reversed(dir_cache_created):
+            try:
+                children = await tgt.list_files(folder_id)
+                if not children:
+                    await tgt.purge_file(folder_id)
+            except Exception as exc:
+                _log().warning(f"清理空目录失败 {folder_id}: {exc}")
 
     rapid_done = sum(1 for r in results if r.get("mode") == "rapid" and r["success"])
     yield {
