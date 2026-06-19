@@ -141,7 +141,9 @@
         
         <!-- 第二步：配置账号信息 -->
         <div v-if="step === 2" class="step-content">
-          <form @submit.prevent="submitForm" class="config-form">
+          <form @submit.prevent="submitForm" class="config-form" autocomplete="off">
+            <input type="text" name="litepan_no_autofill_user" autocomplete="username" tabindex="-1" class="autofill-trap">
+            <input type="password" name="litepan_no_autofill_password" autocomplete="new-password" tabindex="-1" class="autofill-trap">
             <!-- 纵向多行：整行全宽 / 或一行两列（如 WebDAV 根 URL + 子目录） -->
             <div class="config-fields">
               <div
@@ -162,7 +164,8 @@
                   <input
                     v-if="field.type === 'text'"
                     :id="field.name"
-                    :name="field.name"
+                    :name="getInputName(field.name)"
+                    :autocomplete="getAutocomplete(field)"
                     :value="getFieldValue(field.name)"
                     @input="setFieldValue(field.name, $event.target.value)"
                     @paste="handleSmartPaste($event, field.name)"
@@ -178,7 +181,8 @@
                   >
                     <input
                       :id="field.name"
-                      :name="field.name"
+                      :name="getInputName(field.name)"
+                      :autocomplete="getAutocomplete(field)"
                       :value="getFieldValue(field.name)"
                       @input="setFieldValue(field.name, $event.target.value)"
                       type="text"
@@ -198,7 +202,8 @@
                   <input
                     v-else-if="field.type === 'password'"
                     :id="field.name"
-                    :name="field.name"
+                    :name="getInputName(field.name)"
+                    :autocomplete="getAutocomplete(field)"
                     :value="config[field.name]"
                     @input="config[field.name] = $event.target.value"
                     @paste="handleSmartPaste($event, field.name)"
@@ -211,7 +216,8 @@
                   <input
                     v-else-if="field.type === 'number'"
                     :id="field.name"
-                    :name="field.name"
+                    :name="getInputName(field.name)"
+                    :autocomplete="getAutocomplete(field)"
                     v-model.number="config[field.name]"
                     type="number"
                     class="form-input"
@@ -233,6 +239,8 @@
                   <textarea
                     v-else-if="field.type === 'textarea'"
                     :id="field.name"
+                    :name="getInputName(field.name)"
+                    :autocomplete="getAutocomplete(field)"
                     :value="config[field.name]"
                     @input="config[field.name] = $event.target.value"
                     @paste="handleSmartPaste($event, field.name)"
@@ -488,11 +496,26 @@ const qrHintText = computed(() => {
 
 // 驱动配置schema
 const driverConfigSchema = ref({})
+const autofillNonce = `lp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 
 function _classListHasFullWidth(className) {
   if (!className) return false
   return String(className).split(/\s+/).includes('full-width')
 }
+
+const getInputName = (fieldName) => `${autofillNonce}-${form.value.driver_type || 'driver'}-${fieldName}`
+
+const isAutofillSensitiveField = (field = {}) => {
+  const name = String(field.name || '').toLowerCase()
+  const label = String(field.label || '').toLowerCase()
+  return field.type === 'password'
+    || ['root_', 'access_token', 'refresh_token', 'authorization', 'cookie', 'token', 'client_secret'].some(key => name.includes(key))
+    || ['令牌', 'token', 'cookie', 'secret', '密码'].some(key => label.includes(key))
+}
+
+const getAutocomplete = (field = {}) => (
+  isAutofillSensitiveField(field) ? 'new-password' : 'off'
+)
 
 const configLayoutRows = computed(() => {
   const driverConfig = driverConfigSchema.value || {}
@@ -817,7 +840,7 @@ const validateStep2 = () => {
     if (field.name === 'name') {
       return // 跳过name字段，因为已经单独验证
     }
-    
+
     // 特殊处理TTL字段：允许为空值（空值表示使用全局默认值，0表示禁用缓存）
     if (field.name === 'cache_ttl') {
       const ttlValue = config.value[field.name]
@@ -2445,6 +2468,15 @@ textarea.form-input {
 .config-form {
   margin-top: 0;
   padding-top: 0;
+}
+
+.autofill-trap {
+  position: fixed;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .config-fields {

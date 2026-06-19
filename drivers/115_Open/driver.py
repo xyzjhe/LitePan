@@ -120,91 +120,62 @@ class OneOneFiveOpenDriver(BaseDriver):
         url = OneOneFiveAPI.BASE_URL + OneOneFiveAPI.ENDPOINTS[operation]
         
         custom_headers = kwargs.pop('custom_headers', None)
-        if custom_headers:
-            headers = custom_headers
-        else:
-            headers = OneOneFiveApiHelper.build_headers(self.access_token, OneOneFiveAPI.ENDPOINTS[operation])
-        
-        
-        await self._apply_operation_delay()
-        async with self._session.request(method, url, headers=headers, **kwargs) as response:
-            if response.status != 200:
-                text = await response.text()
-                
-                if response.status in [401, 403]:
-                    if self.is_connectivity_test():
-                        raise Exception(f"115网盘API错误 ({response.status}): {text}")
-                    self._log.warning(f"检测到认证错误 ({response.status}): {text}", driver_name="115_open")
-                    auth_success = await self._handle_auth_error(f"API错误 ({response.status})")
-                    if auth_success:
-                        self._log.info("✅ 被动刷新成功，重新尝试请求", driver_name="115_open")
-                        headers = OneOneFiveApiHelper.build_headers(self.access_token, OneOneFiveAPI.ENDPOINTS[operation])
-                        await self._apply_operation_delay()
-                        async with self._session.request(method, url, headers=headers, **kwargs) as retry_response:
-                            if retry_response.status != 200:
-                                retry_text = await retry_response.text()
-                                raise Exception(f"115网盘API错误 ({retry_response.status}): {retry_text}")
-                            
-                            try:
-                                data = await retry_response.json()
-                                success, error_msg = OneOneFiveApiHelper.check_success(data)
-                                if not success:
-                                    raise Exception(error_msg)
-                                return data
-                            except Exception as e:
-                                content_type = retry_response.headers.get('content-type', '')
-                                if 'text/html' in content_type:
-                                    raise Exception("API返回HTML页面，可能是认证失败或端点错误")
-                                else:
-                                    raise Exception(f"API返回非JSON内容: {str(e)}")
-                    else:
-                        self._log.error("❌ 被动刷新失败", driver_name="115_open")
-                
-                raise Exception(f"115网盘API错误 ({response.status}): {text}")
-            
+
+        # HTML / 非 JSON / 网络抖动属于网关或网络层的瞬时问题：调用内退避重试，绝不触发 token 刷新。
+        # 只有 115 返回的、能解析出的明确 JSON 认证错误，才向外层 @with_auth_retry 抛认证异常去统一刷新。
+        # 连通性测试不重试，保持快速失败。
+        backoffs = (0,) if self.is_connectivity_test() else (0, 2, 5)
+        total = len(backoffs)
+        last_transient = ""
+
+        for attempt, backoff in enumerate(backoffs, start=1):
+            if backoff:
+                await asyncio.sleep(backoff)
+
+            headers = custom_headers or OneOneFiveApiHelper.build_headers(
+                self.access_token, OneOneFiveAPI.ENDPOINTS[operation]
+            )
+            await self._apply_operation_delay()
             try:
-                data = await response.json()
+                async with self._session.request(method, url, headers=headers, **kwargs) as response:
+                    status = response.status
+                    content_type = response.headers.get('content-type', '')
+                    text = await response.text()
+            except Exception as e:
+                last_transient = f"网络异常: {e}"
+                self._log.warning(
+                    f"🌐 数据接口瞬时失败({operation}, 第{attempt}/{total}次)，退避重试: {last_transient}",
+                    driver_name="115_open"
+                )
+                continue
+
+            # 能解析出 JSON 才算 115 的"明确答复"；否则是网关/限流页等瞬时情况
+            try:
+                data = json.loads(text)
             except Exception:
-                content_type = response.headers.get('content-type', '')
-                if 'text/html' in content_type:
-                    raise Exception("API返回HTML页面，可能是认证失败或端点错误")
-                else:
-                    raise Exception(f"API返回非JSON内容")
-            
+                data = None
+
+            if not isinstance(data, dict):
+                last_transient = self._summarize_response_body(text, content_type)
+                self._log.warning(
+                    f"🌐 数据接口返回非JSON({operation}, status={status})，"
+                    f"退避重试(第{attempt}/{total}次): {last_transient}",
+                    driver_name="115_open"
+                )
+                continue
+
             success, error_msg = OneOneFiveApiHelper.check_success(data)
-            if not success:
-                if "Token认证失败" in error_msg or "access_token" in error_msg.lower():
-                    if self.is_connectivity_test():
-                        raise Exception(error_msg)
-                    self._log.warning(f"🔐 检测到认证错误，触发被动刷新: {error_msg}", driver_name="115_open")
-                    auth_success = await self._handle_auth_error(f"API错误 (JSON): {error_msg}")
-                    if auth_success:
-                        self._log.info("✅ 被动刷新成功，重新尝试请求", driver_name="115_open")
-                        headers = OneOneFiveApiHelper.build_headers(self.access_token, OneOneFiveAPI.ENDPOINTS[operation])
-                        await self._apply_operation_delay()
-                        async with self._session.request(method, url, headers=headers, **kwargs) as retry_response:
-                            if retry_response.status != 200:
-                                retry_text = await retry_response.text()
-                                raise Exception(f"115网盘API错误 ({retry_response.status}): {retry_text}")
-                            
-                            try:
-                                retry_data = await retry_response.json()
-                                retry_success, retry_error_msg = OneOneFiveApiHelper.check_success(retry_data)
-                                if not retry_success:
-                                    raise Exception(retry_error_msg)
-                                return retry_data
-                            except Exception as e:
-                                content_type = retry_response.headers.get('content-type', '')
-                                if 'text/html' in content_type:
-                                    raise Exception("API返回HTML页面，可能是认证失败或端点错误")
-                                else:
-                                    raise Exception(f"API返回非JSON内容: {str(e)}")
-                    else:
-                        self._log.error("❌ 被动刷新失败", driver_name="115_open")
-                
-                raise Exception(error_msg)
-            
-            return data
+            if success:
+                return data
+
+            # 115 给了明确 JSON 错误：直接抛出。若为认证类错误（含"Token认证失败"/access_token），
+            # 外层 @with_auth_retry 会据此刷新 token 并重试整个请求；其余业务错误按原样抛出。
+            raise Exception(error_msg)
+
+        # 连续多次都是瞬时失败：抛出不含认证关键字的错误，避免外层 @with_auth_retry 误判为认证错误又去刷新
+        raise Exception(
+            f"115网盘API请求失败：网关或网络异常，已重试{total}次仍未获得有效响应（{operation}，详见日志）"
+        )
 
     # 115 Open API 错误码分类
     _FATAL_ERROR_CODES = {40140115, 40140116, 40140119, 40140120}  # token 签名失败/无效/过期/被篡改
@@ -219,58 +190,101 @@ class OneOneFiveOpenDriver(BaseDriver):
         async with self._refresh_lock:
             return await self._refresh_token()
 
+    @staticmethod
+    def _summarize_response_body(text: str, content_type: str = "") -> str:
+        """把网关/限流返回的 HTML（或其它非 JSON）正文压成一行可读摘要，便于排错时一眼看出是什么。"""
+        import re
+        ct = content_type or "(未知)"
+        if not text or not text.strip():
+            return f"<空响应> content-type={ct}"
+        flat = re.sub(r"\s+", " ", text.strip())
+        title_match = re.search(r"<title[^>]*>(.*?)</title>", text, re.IGNORECASE | re.DOTALL)
+        if title_match and title_match.group(1).strip():
+            title = re.sub(r"\s+", " ", title_match.group(1)).strip()
+            return f"content-type={ct} <title>={title!r} 正文片段={flat[:200]!r}"
+        return f"content-type={ct} 正文片段={flat[:300]!r}"
+
+    # 刷新返回 HTML/非 JSON/网络抖动时的调用内重试节奏（秒）：先快后慢，避免立刻判死进冷却
+    _REFRESH_TRANSIENT_BACKOFFS = (0, 3, 6)
+
     async def _refresh_token(self):
-        try:
-            if not self.refresh_token:
-                self._log.error("没有 refresh_token，无法刷新", driver_name="115_open")
-                from core.auth_manager import RefreshOutcome
+        from core.auth_manager import RefreshOutcome
+
+        if not self.refresh_token:
+            self._log.error("没有 refresh_token，无法刷新", driver_name="115_open")
+            return RefreshOutcome.FATAL
+
+        last_transient = ""
+        total = len(self._REFRESH_TRANSIENT_BACKOFFS)
+        for attempt, backoff in enumerate(self._REFRESH_TRANSIENT_BACKOFFS, start=1):
+            if backoff:
+                await asyncio.sleep(backoff)
+
+            try:
+                await self._ensure_session()
+                await self._apply_operation_delay()
+                async with self._session.post(
+                    OneOneFiveAPI.REFRESH_URL,
+                    data={'refresh_token': self.refresh_token},
+                    headers={'Content-Type': 'application/x-www-form-urlencoded'}
+                ) as response:
+                    status = response.status
+                    content_type = response.headers.get('content-type', '')
+                    text = await response.text()
+            except Exception as e:
+                last_transient = f"网络异常: {e}"
+                self._log.warning(
+                    f"🌐 token 刷新瞬时失败(第{attempt}/{total}次)，将重试: {last_transient}",
+                    driver_name="115_open"
+                )
+                continue
+
+            # 能解析出 JSON 才算 115 给了"明确答复"；否则是网关/限流页等瞬时情况
+            try:
+                result = json.loads(text)
+            except Exception:
+                result = None
+
+            if not isinstance(result, dict):
+                last_transient = self._summarize_response_body(text, content_type)
+                self._log.warning(
+                    f"🌐 token 刷新返回非JSON(疑似网关/限流页, status={status})，"
+                    f"按瞬时失败重试(第{attempt}/{total}次): {last_transient}",
+                    driver_name="115_open"
+                )
+                continue
+
+            if result.get('state') == 1 and result.get('data'):
+                new_access_token = result['data'].get('access_token')
+                new_refresh_token = result['data'].get('refresh_token')
+                expires_in = result['data'].get('expires_in', OneOneFiveConstants.DEFAULT_TOKEN_EXPIRES)
+
+                if new_access_token:
+                    self.access_token = new_access_token
+                    self.config.access_token = new_access_token
+                if new_refresh_token:
+                    self.refresh_token = new_refresh_token
+                    self.config.refresh_token = new_refresh_token
+
+                self.token_expires_at = time.time() + expires_in
+                self.config.token_expires_at = self.token_expires_at
+                return RefreshOutcome.SUCCESS
+
+            # 115 给了明确错误码：致命码直接重新授权，其余（如 40140117 太频繁）交给上层正常冷却
+            error_code = result.get('code', 0)
+            error_msg = result.get('message', 'Unknown error')
+            if error_code in self._FATAL_ERROR_CODES:
+                self._log.error(f"token 刷新致命失败: code={error_code}, msg={error_msg}", driver_name="115_open")
                 return RefreshOutcome.FATAL
-            await self._ensure_session()
-            data = {'refresh_token': self.refresh_token}
-            await self._apply_operation_delay()
-            async with self._session.post(
-                OneOneFiveAPI.REFRESH_URL,
-                data=data,
-                headers={'Content-Type': 'application/x-www-form-urlencoded'}
-            ) as response:
-                if response.status != 200:
-                    self._log.error(f"token 刷新失败，状态码: {response.status}", driver_name="115_open")
-                    from core.auth_manager import RefreshOutcome
-                    return RefreshOutcome.RETRYABLE
-
-                result = await response.json()
-
-                if result.get('state') == 1 and result.get('data'):
-                    new_access_token = result['data'].get('access_token')
-                    new_refresh_token = result['data'].get('refresh_token')
-                    expires_in = result['data'].get('expires_in', OneOneFiveConstants.DEFAULT_TOKEN_EXPIRES)
-
-                    if new_access_token:
-                        self.access_token = new_access_token
-                        self.config.access_token = new_access_token
-                    if new_refresh_token:
-                        self.refresh_token = new_refresh_token
-                        self.config.refresh_token = new_refresh_token
-
-                    self.token_expires_at = time.time() + expires_in
-                    self.config.token_expires_at = self.token_expires_at
-                    from core.auth_manager import RefreshOutcome
-                    return RefreshOutcome.SUCCESS
-                else:
-                    error_code = result.get('code', 0)
-                    error_msg = result.get('message', 'Unknown error')
-                    from core.auth_manager import RefreshOutcome
-                    if error_code in self._FATAL_ERROR_CODES:
-                        self._log.error(f"token 刷新致命失败: code={error_code}, msg={error_msg}", driver_name="115_open")
-                        return RefreshOutcome.FATAL
-                    else:
-                        self._log.error(f"token 刷新失败: code={error_code}, msg={error_msg}", driver_name="115_open")
-                        return RefreshOutcome.RETRYABLE
-
-        except Exception as e:
-            self._log.error(f"token 刷新异常: {e}", driver_name="115_open")
-            from core.auth_manager import RefreshOutcome
+            self._log.error(f"token 刷新失败: code={error_code}, msg={error_msg}", driver_name="115_open")
             return RefreshOutcome.RETRYABLE
+
+        # 连续多次都是瞬时失败（没拿到 115 的明确答复）：退回上层冷却，等网关/限流恢复，token 未判死
+        self._log.error(
+            f"token 刷新连续 {total} 次瞬时失败，暂入冷却等待恢复（token 未判死）。最后一次: {last_transient}",
+            driver_name="115_open"
+        )
+        return RefreshOutcome.RETRYABLE
     
     async def refresh_auth(self):
         try:

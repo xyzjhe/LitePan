@@ -1512,6 +1512,7 @@ defineExpose({
 
 .config-action-buttons {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
   gap: 8px;

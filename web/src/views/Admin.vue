@@ -1017,6 +1017,7 @@ watch(
 /* 左侧边栏 */
 .sidebar-container {
   width: 220px;
+  flex-shrink: 0;
   background-color: #ffffff;
   display: flex;
   flex-direction: column;
@@ -1134,6 +1135,7 @@ watch(
 /* 主内容区域 */
 .main-content {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   background-color: #F5F7FA;

@@ -3898,7 +3898,6 @@ onBeforeUnmount(() => {
   font-size: 14px;
   font-weight: 500;
   line-height: 1.2;
-  white-space: nowrap;
   transition: all 0.2s ease;
   position: relative;
 }
@@ -4112,6 +4111,7 @@ onBeforeUnmount(() => {
 }
 
 .task-table-container .data-table {
+  min-width: 0;
   border-collapse: separate;
   border-spacing: 0;
   border-radius: 12px;
@@ -4139,7 +4139,7 @@ onBeforeUnmount(() => {
 
 .data-table {
   width: 100%;
-  min-width: 760px;
+  min-width: 0;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -4170,17 +4170,17 @@ onBeforeUnmount(() => {
 }
 
 .organize-table {
-  min-width: 880px;
+  min-width: 0;
 }
 
 .organize-table th:nth-child(1),
 .organize-table td:nth-child(1) {
-  width: 18%;
+  width: 15%;
 }
 
 .organize-table th:nth-child(2),
 .organize-table td:nth-child(2) {
-  width: 38%;
+  width: 41%;
 }
 
 .organize-table th:nth-child(3),
@@ -4215,6 +4215,7 @@ onBeforeUnmount(() => {
 
 .action-buttons {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   align-items: center;
   gap: 8px;

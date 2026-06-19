@@ -11,6 +11,7 @@ DEFAULT_MEDIA_EXTENSIONS = "mkv;mp4;avi;ts;mov;wmv;iso;m2ts;rmvb;flv;m4v;webm"
 DEFAULT_METADATA_EXTENSIONS = "nfo;ass;ssa;srt;sub;idx;sup;vtt;jpg;jpeg;png;webp;bmp"
 
 MAX_FILENAME_BYTES = 235
+MAX_REASONABLE_SEASON = 99
 
 GENERIC_MEDIA_DIR_NAMES = {
     "电影", "影片", "movie", "movies",
@@ -281,6 +282,32 @@ def parse_filename_with_guessit(name: str) -> dict:
         return {}
 
 
+def _looks_like_resolution_pair(left: Optional[int], right: Optional[int]) -> bool:
+    if left is None or right is None:
+        return False
+    if left >= 640 and right >= 360:
+        return True
+    if left in _RESOLUTION_LIKE_NUMBERS or right in _RESOLUTION_LIKE_NUMBERS:
+        return True
+    return False
+
+
+def _is_reasonable_season(value: Optional[int]) -> bool:
+    return value is not None and 0 <= value <= MAX_REASONABLE_SEASON
+
+
+def _clear_unreasonable_season(parsed: dict) -> dict:
+    out = dict(parsed or {})
+    season = as_first_int(out.get("season"))
+    if season is None or season <= MAX_REASONABLE_SEASON:
+        return out
+    out["season"] = None
+    if out.get("type") == "episode" and out.get("episode") is not None:
+        out["episode"] = None
+        out["type"] = "movie"
+    return out
+
+
 def apply_episode_fallbacks(name: str, result: dict) -> dict:
     parsed = dict(result or {})
     stem = str(name or "").rsplit(".", 1)[0]
@@ -297,16 +324,25 @@ def apply_episode_fallbacks(name: str, result: dict) -> dict:
     season = None
     episode = None
     matched_span = None
+    invalid_season_episode_seen = False
     for pattern in season_episode_patterns:
         m = re.search(pattern, compact, flags=re.IGNORECASE)
         if not m:
             continue
         season = parse_episode_number(m.group(1))
         episode = parse_episode_number(m.group(2))
+        if (
+            not _is_reasonable_season(season)
+            or ("x" in m.group(0).lower() and _looks_like_resolution_pair(season, episode))
+        ):
+            invalid_season_episode_seen = True
+            season = None
+            episode = None
+            continue
         matched_span = m.span()
         break
 
-    if episode is None:
+    if episode is None and not invalid_season_episode_seen:
         episode_patterns = [
             rf"(?:第\s*{number_pattern}\s*[集话話回期])",
             rf"(?:^|[\s._\-\[])(?:EP|Ep|ep|Episode|episode|E)\s*{number_pattern}(?:$|[\s._\-\]])",
@@ -341,7 +377,7 @@ def apply_episode_fallbacks(name: str, result: dict) -> dict:
                 flags=re.IGNORECASE,
             ):
                 parsed["title"] = None
-    return parsed
+    return _clear_unreasonable_season(parsed)
 
 
 _ABS_LEADING_EP_RE = re.compile(r"^(\d{3,4})(?:[.\s_\-]|$)")
@@ -405,7 +441,7 @@ def fix_guessit_absolute_episode_split(name: str, parsed: dict) -> dict:
 
 
 def normalize_parsed_media(parsed: dict) -> dict:
-    result = dict(parsed or {})
+    result = _clear_unreasonable_season(parsed or {})
     result["season"] = as_first_int(result.get("season"))
     result["episode"] = as_first_int(result.get("episode"))
     title = str(result.get("title") or "").strip()
