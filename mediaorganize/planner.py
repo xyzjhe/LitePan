@@ -959,8 +959,11 @@ class Planner:
                 self.quota_reached = True
                 self.log(f"[计划] 已达到本次最多 {self.max_works_per_run} 部作品上限，剩余作品将在下次重新生成计划时处理")
                 return
+            before_actions = len(self.actions)
             await self._plan_group(group_key, items, align_defaults.get(group_key, {}))
-            self.planned_work_count += 1
+            # 只有真正产生了整理动作才算占用配额；全跳过（已整理等）的作品不占名额
+            if len(self.actions) > before_actions:
+                self.planned_work_count += 1
             self._emit_progress()
 
     def _group_entries(self, entries: List[Tuple[Any, list]]) -> Dict[Tuple, list]:

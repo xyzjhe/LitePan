@@ -3630,19 +3630,22 @@ const removePlanGroup = async (group) => {
   }
   const toRemove = [...group.actions]
   if (group.dirAction) toRemove.push(group.dirAction)
-  const removedIds = []
-  for (const action of toRemove) {
-    try {
-      const resp = await axios.delete(`/api/admin/media-organize/tasks/${taskId}/plan/actions/${action.id}`)
-      if (resp.data.success) removedIds.push(action.id)
-    } catch (e) {}
-  }
-  if (removedIds.length) {
-    const removedSet = new Set(removedIds)
-    organizePlanRelocates.value = organizePlanRelocates.value.filter(a => !removedSet.has(a.id))
-    window.appNotification.success(`已移除 ${removedIds.length} 项`)
-  } else {
-    window.appNotification.error('移除失败')
+  const actionIds = toRemove.map(a => a.id)
+  try {
+    const resp = await axios.post(
+      `/api/admin/media-organize/tasks/${taskId}/plan/actions/batch-delete`,
+      { action_ids: actionIds }
+    )
+    const removedIds = (resp.data.success && resp.data.data) ? (resp.data.data.removed || []) : []
+    if (removedIds.length) {
+      const removedSet = new Set(removedIds)
+      organizePlanRelocates.value = organizePlanRelocates.value.filter(a => !removedSet.has(a.id))
+      window.appNotification.success(`已移除 ${removedIds.length} 项`)
+    } else {
+      window.appNotification.error(resp.data.message || '移除失败')
+    }
+  } catch (e) {
+    window.appNotification.error('移除失败: ' + (e.response?.data?.message || e.message))
   }
 }
 

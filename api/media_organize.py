@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -20,6 +20,7 @@ from mediaorganize import (
     get_plan,
     update_plan_action,
     delete_plan_action,
+    delete_plan_actions,
     get_logs,
     get_progress,
     request_stop,
@@ -141,6 +142,10 @@ class TaskUpdate(BaseModel):
 
 class PlanActionUpdate(BaseModel):
     target_name: str
+
+
+class PlanActionsDelete(BaseModel):
+    action_ids: List[str]
 
 
 class SettingsUpdate(BaseModel):
@@ -336,6 +341,19 @@ async def delete_plan_action_api(
 ):
     try:
         result = await delete_plan_action(task_id, action_id)
+        return success_response(data=result, message="动作已删除")
+    except Exception as e:
+        return error_response(message=str(e))
+
+
+@router.post("/tasks/{task_id}/plan/actions/batch-delete")
+async def delete_plan_actions_api(
+    task_id: str,
+    payload: PlanActionsDelete,
+    session_data: dict = Depends(require_admin_auth),
+):
+    try:
+        result = await delete_plan_actions(task_id, payload.action_ids)
         return success_response(data=result, message="动作已删除")
     except Exception as e:
         return error_response(message=str(e))

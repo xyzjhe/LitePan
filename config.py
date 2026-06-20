@@ -10,7 +10,6 @@ APP_NAME = "LitePan"
 APP_VERSION = "0.3.1-Beta"
 
 try:
-    # 日志模块延迟导入，避免应用启动早期的循环依赖
     from core.log_manager import get_writer, LogModule
     _log_available = True
 except ImportError:
@@ -18,31 +17,28 @@ except ImportError:
 
 
 class Settings:
-    # 基础服务参数（不入库，进程内使用）
     WEB_HOST: str = '0.0.0.0'
     WEB_PORT: int = 5211
     DATABASE_PATH: str = 'data/litepan.db'
-    SECRET_KEY: str = ""  # 由 _get_or_create_secret_key 生成
+    SECRET_KEY: str = ""
     LOG_LEVEL: str = "INFO"
     LOG_RETENTION_DAYS: int = 10
 
-    # 系统/安全（入库，可在后台调整）
     ADMIN_USERNAME: str = "admin"
-    ADMIN_PASSWORD: str = "admin"  # 明文默认值，落库前会做 hash
+    ADMIN_PASSWORD: str = "admin"
     SESSION_TIMEOUT: int = 7200
     OAUTH_SERVER_URL: str = "https://oauth.litepan.top"
     PUBLIC_INDEX_ENABLED: bool = True
     INDEX_ACCOUNT_SWITCH_MODE: str = "dropdown"
     ADMIN_HOME_RETURN_MODE: str = "top_icon"
     STRM_BASE_URL: str = ""
-    STRM_TOKEN: str = ""  # 首次落库时自动生成
+    STRM_TOKEN: str = ""
     STRM_LINK_FORMAT: str = "v1"
     STRM_DEFAULT_SCAN_INTERVAL: int = 120
     STRM_TASK_CONCURRENCY: int = 3
     UPLOAD_TASK_CONCURRENCY: int = 3
     AUTH_ACTIVE_REFRESH_ENABLED: bool = True
 
-    # 缓存
     CACHE_ENABLED: bool = True
     CACHE_TTL: int = 1800
     CACHE_PERSISTENCE_ENABLED: bool = True
@@ -50,45 +46,34 @@ class Settings:
     CACHE_MAX_ITEMS: int = 10000
     CACHE_MEMORY_LIMIT_MB: int = 512
 
-    # WebDAV
     WEBDAV_ENABLED: bool = True
     WEBDAV_SMART_CHUNK_ENABLED: bool = True
     WEBDAV_CHUNK_SIZE: int = 262144
     WEBDAV_CACHE_ENABLED: bool = True
 
-    # 性能 / 前端
     MAX_CONCURRENT_REQUESTS: int = 10
     REQUEST_TIMEOUT: int = 30
     THEME: str = "light"
     ITEMS_PER_PAGE: int = 50
 
-    # 缓存保持
     CACHE_RETENTION_DEFAULT_API_INTERVAL: int = 200
     CACHE_RETENTION_DEFAULT_REFRESH_INTERVAL: int = 60
     STRM_DEFAULT_API_INTERVAL: int = 200
-
-    # 媒体整理 — 代理
     MO_PROXY_ENABLED: bool = False
     MO_PROXY_URL: str = ""
     MO_PROXY_USERNAME: str = ""
     MO_PROXY_PASSWORD: str = ""
-    # 媒体整理 — TMDB
     MO_TMDB_API_KEY: str = ""
     MO_TMDB_LANGUAGE: str = "zh-CN"
-    # 媒体整理 — 节流
     MO_API_REQUEST_INTERVAL_MS: int = 300
     MO_FFPROBE_REQUEST_INTERVAL_MS: int = 3000
     MO_TMDB_REQUEST_INTERVAL_MS: int = 250
-    # 媒体整理 — 执行
     MO_FFPROBE_CONCURRENCY: int = 2
     MO_FFPROBE_TIMEOUT_SECONDS: int = 30
     MO_MIN_CONFIDENCE_THRESHOLD: float = 0.5
-    # 媒体整理 — 文件类型
     MO_FILE_EXTENSIONS: str = "mkv;mp4;avi;ts;mov;wmv;iso;m2ts;rmvb;flv;m4v;webm"
     MO_METADATA_EXTENSIONS: str = "nfo;ass;ssa;srt;sub;idx;sup;vtt;jpg;jpeg;png;webp;bmp"
-    # 媒体整理 — 媒体信息标签排序
     MO_MEDIA_TAG_ORDER: str = '["screen_size","video_codec","audio_codec","audio_channels"]'
-
     MO_ALIGN_MEDIA_TAGS: bool = False
     MO_MAX_WORKS_PER_RUN: int = 50
     MO_OVERWRITE_EXISTING: bool = False
@@ -120,7 +105,7 @@ class Settings:
                 "unit": "小时",
                 "min": 0.5,
                 "max": 24,
-                "default": cls.SESSION_TIMEOUT / 3600  # 展示单位：小时
+                "default": cls.SESSION_TIMEOUT / 3600
             },
             "oauth_server_url": {
                 "type": "string",
@@ -211,7 +196,7 @@ class Settings:
                 "unit": "分钟",
                 "min": 1,
                 "max": 1440,
-                "default": cls.CACHE_TTL / 60  # 展示单位：分钟
+                "default": cls.CACHE_TTL / 60
             },
             "cache_persistence_enabled": {
                 "type": "boolean",
@@ -265,7 +250,7 @@ class Settings:
                 "unit": "KB",
                 "min": 64,
                 "max": 8192,
-                "default": cls.WEBDAV_CHUNK_SIZE // 1024  # 展示单位：KB
+                "default": cls.WEBDAV_CHUNK_SIZE // 1024
             },
             "webdav_cache_enabled": {
                 "type": "boolean",
@@ -399,8 +384,7 @@ class Settings:
         try:
             secret_file.parent.mkdir(exist_ok=True)
             secret_file.write_text(new_key, encoding='utf-8')
-            secret_file.chmod(0o600)  # 只允许所有者读写
-            # 日志系统此时可能还未启动，手动打印一条提示
+            secret_file.chmod(0o600)
             from datetime import datetime
             timestamp = datetime.now().strftime('%H:%M:%S')
             print(f"[{timestamp}] ℹ️ 配置 | 新的SECRET_KEY已生成并保存")
@@ -446,7 +430,6 @@ class ConfigManager:
         if self._initialized:
             return
 
-        # 启动阶段强制走同步分支，避免被事件循环假状态干扰
         print("强制使用同步配置初始化")
         self._load_from_db_sync()
         self._initialized = True
@@ -467,7 +450,6 @@ class ConfigManager:
                 result = await cursor.fetchone()
 
                 if not result:
-                    # 首启：建表 + 写默认值
                     await self._create_config_table_async(db_conn)
                     await self._init_default_configs_async()
                     return
@@ -488,7 +470,6 @@ class ConfigManager:
 
     async def _create_config_table_async(self, db_conn):
         try:
-            # noinspection SqlNoDataSourceInspection,SqlDialectInspection
             await db_conn.execute("""
                 CREATE TABLE IF NOT EXISTS configs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -510,7 +491,6 @@ class ConfigManager:
             import asyncio
             try:
                 asyncio.get_running_loop()
-                # 事件循环中禁止同步初始化，直接返回默认值避免死锁
                 print("检测到事件循环，使用默认配置值")
                 return Settings.get_default_value(key)
             except RuntimeError:
@@ -537,9 +517,9 @@ class ConfigManager:
         try:
             import asyncio
             try:
-                loop = asyncio.get_running_loop()
-                task = loop.create_task(self._set_async(key, value))
-                loop.run_until_complete(task)
+                asyncio.get_running_loop()
+                print(f"检测到事件循环，跳过同步写入配置: {key}")
+                return False
             except RuntimeError:
                 asyncio.run(self._set_async(key, value))
 
@@ -583,9 +563,9 @@ class ConfigManager:
         try:
             import asyncio
             try:
-                loop = asyncio.get_running_loop()
-                task = loop.create_task(self._reset_to_default_async(key))
-                loop.run_until_complete(task)
+                asyncio.get_running_loop()
+                print(f"检测到事件循环，跳过同步重置配置: {key}")
+                return False
             except RuntimeError:
                 asyncio.run(self._reset_to_default_async(key))
 
@@ -624,7 +604,6 @@ class ConfigManager:
             for key, meta in metadata.items():
                 default_value = Settings.get_default_value(key)
                 if default_value is not None:
-                    # strm_token 默认空，首启要生成一次随机值
                     if key == "strm_token" and not str(default_value):
                         default_value = secrets.token_urlsafe(32)
                     async with db_conn.execute("SELECT key FROM configs WHERE key = ?", (key,)) as cursor:
@@ -667,7 +646,6 @@ class ConfigManager:
                 **meta
             }
 
-            # sensitive 字段只回显掩码，管理员用户名例外
             if meta.get("sensitive") and key != "admin_username":
                 config_item["current_value"] = "******"
 
@@ -682,9 +660,9 @@ class ConfigManager:
         try:
             import asyncio
             try:
-                loop = asyncio.get_running_loop()
-                task = loop.create_task(self._init_default_configs_async())
-                loop.run_until_complete(task)
+                asyncio.get_running_loop()
+                print("检测到事件循环，跳过同步初始化默认配置")
+                return
             except RuntimeError:
                 asyncio.run(self._init_default_configs_async())
 

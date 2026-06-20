@@ -258,39 +258,21 @@ class Executor:
 
         for parent_id, items in to_delete_by_dir.items():
             self.check_stop()
-            ids = [iid for iid, _ in items]
-            try:
-                r = await self._batch_delete(ids)
-            except Exception as e:
-                self.log(f"[覆盖] 批量删除异常: {e}，改为逐个删除")
-                r = None
-            if r is None or not getattr(r, "success", False):
-                # 退化到单文件删除
-                for iid, name in items:
-                    try:
-                        rr = await self.driver.delete_file(iid)
-                        if not rr.success:
-                            self.log(f"[覆盖] 删除失败 {name}: {rr.message}")
-                    except Exception as e:
-                        self.log(f"[覆盖] 删除异常 {name}: {e}")
-            self.stats["overwritten"] += len(items)
+            # 覆盖删除的冲突项通常很少，直接逐个删并精确计数；
+            # 不依赖 batch_delete_file（部分驱动是循环实现，删一半失败会导致整组重删与漏计）。
+            success_count = 0
+            for iid, name in items:
+                try:
+                    rr = await self.driver.delete_file(iid)
+                    if rr.success:
+                        success_count += 1
+                    else:
+                        self.log(f"[覆盖] 删除失败 {name}: {rr.message}")
+                except Exception as e:
+                    self.log(f"[覆盖] 删除异常 {name}: {e}")
+            self.stats["overwritten"] += success_count
             await self._invalidate_dir_cache(parent_id)
-            self.log(f"[覆盖] 已清理目标目录 {parent_id} 内 {len(items)} 个冲突项")
-
-    async def _batch_delete(self, ids: List[str]):
-        """优先用 batch_delete_file，没有就退化为多次 delete_file。"""
-        if not ids:
-            return None
-        batch_fn = getattr(self.driver, "batch_delete_file", None)
-        if callable(batch_fn):
-            return await batch_fn(ids)
-        # 退化：逐个删除，全部成功才算成功
-        from core.base import OperationResult
-        for fid in ids:
-            r = await self.driver.delete_file(fid)
-            if not r.success:
-                return OperationResult(success=False, message=r.message)
-        return OperationResult(success=True, message="ok")
+            self.log(f"[覆盖] 已清理目标目录 {parent_id} 内 {success_count}/{len(items)} 个冲突项")
 
     async def _exec_same_dir_rename(self, action: PlanAction):
         """同目录改名：保持单文件 rename，但带 safe_verify。"""

@@ -431,3 +431,22 @@ async def delete_plan_action(task_id: str, action_id: str) -> Dict[str, Any]:
     plan.actions = [a for a in plan.actions if a.id != action_id]
     await _save_plan(task_id, plan)
     return {"removed": action_id}
+
+
+async def delete_plan_actions(task_id: str, action_ids: List[str]) -> Dict[str, Any]:
+    """批量从计划中移除整理动作：单次读写，规则同 delete_plan_action（仅 relocate 且未执行）。"""
+    plan = await _load_plan(task_id)
+    if not plan:
+        raise Exception("当前没有可编辑的计划")
+    wanted = set(action_ids or [])
+    if not wanted:
+        return {"removed": [], "skipped": []}
+    removable = {
+        a.id for a in plan.actions
+        if a.id in wanted and a.kind == "relocate" and a.status != "done"
+    }
+    skipped = [aid for aid in wanted if aid not in removable]
+    if removable:
+        plan.actions = [a for a in plan.actions if a.id not in removable]
+        await _save_plan(task_id, plan)
+    return {"removed": list(removable), "skipped": skipped}

@@ -2118,31 +2118,39 @@ class StrmSyncManager:
                     continue
 
                 changed = False
+                # old_value 为空表示"未知旧 token"，此时匹配任意现有 token（含缺失），用于首次设置 token
+                def _token_matches(current: str) -> bool:
+                    return (not old_value) or (current == old_value)
+
                 if parsed["format"] == "v2":
-                    if old_value and parsed.get("token") == old_value:
+                    if _token_matches(parsed.get("token") or ""):
                         matched += 1
                         replaced = self._replace_v2_token_in_url(parsed, new_value)
                         changed = replaced != first
                 else:
                     parts = parsed["parts"]
                     pairs = parsed.get("query_pairs") or []
-                    next_pairs = []
-                    for key, value in pairs:
-                        if key == "token" and old_value and value == old_value:
-                            matched += 1
-                            if value != new_value:
+                    has_token_param = any(key == "token" for key, _ in pairs)
+                    if _token_matches(parsed.get("token") or ""):
+                        matched += 1
+                        next_pairs = []
+                        for key, value in pairs:
+                            if key == "token" and value != new_value:
                                 value = new_value
                                 changed = True
-                        next_pairs.append((key, value))
-
-                    if changed:
-                        replaced = urllib.parse.urlunsplit((
-                            parts.scheme,
-                            parts.netloc,
-                            parts.path,
-                            urllib.parse.urlencode(next_pairs),
-                            parts.fragment,
-                        ))
+                            next_pairs.append((key, value))
+                        # 旧链接没有 token 参数时补上（首次设置 token 的场景）
+                        if not has_token_param:
+                            next_pairs.append(("token", new_value))
+                            changed = True
+                        if changed:
+                            replaced = urllib.parse.urlunsplit((
+                                parts.scheme,
+                                parts.netloc,
+                                parts.path,
+                                urllib.parse.urlencode(next_pairs),
+                                parts.fragment,
+                            ))
 
                 if changed:
                     lines[0] = replaced

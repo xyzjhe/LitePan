@@ -27,15 +27,14 @@ class CacheRetentionTask:
     parent_id: str
     path: str
     recursive: bool
-    api_interval: int  # 毫秒
-    refresh_interval: int  # 分钟
+    api_interval: int
+    refresh_interval: int
     status: TaskStatus
     file_count: int = 0
     last_refresh: Optional[datetime] = None
     last_refresh_status: Optional[str] = None
     error_message: Optional[str] = None
     next_run_time: Optional[datetime] = None
-    # None / 'user' / 'account_disabled' / 'auth_failure'
     paused_reason: Optional[str] = None
     time_window_enabled: bool = False
     time_start: str = "00:00"
@@ -50,7 +49,6 @@ class CacheRetentionManager:
 
     def __init__(self):
         self._tasks: Dict[int, CacheRetentionTask] = {}
-        # 仅装真正正在执行的任务，RUNNING 状态但未被调度的不算
         self._running_tasks: Set[int] = set()
         self._running_task_futures: Dict[int, asyncio.Task] = {}
         self._scheduler_task: Optional[asyncio.Task] = None
@@ -165,7 +163,6 @@ class CacheRetentionManager:
 
                 now = datetime.now()
 
-                # 获取 STRM 正在使用的账号，避免同账号同时打 API
                 strm_busy_account_ids: Set[int] = set()
                 try:
                     from core.strm_sync_manager import strm_sync_manager
@@ -186,7 +183,6 @@ class CacheRetentionManager:
                             continue
                         tasks_to_run.append(task_id)
 
-                # 单轮只触发一个到期任务，避免多任务同时打爆同账号 API
                 if tasks_to_run:
                     task_id = tasks_to_run[0]
                     if task_id not in self._running_tasks:
@@ -201,7 +197,7 @@ class CacheRetentionManager:
             except Exception as e:
                 self._logger.error(f"调度器循环出错: {e}")
                 await asyncio.sleep(5)
-    
+
     async def _is_cache_globally_enabled(self) -> bool:
         try:
             from config import config_manager
@@ -254,7 +250,6 @@ class CacheRetentionManager:
             resumed_count = 0
             for task_id, task in self._tasks.items():
                 if task.status == TaskStatus.PAUSED:
-                    # 账号 TTL=0 表示该账号不缓存，这种任务要保持暂停
                     if not await self._should_pause_task_due_to_ttl(task):
                         self._resume_task(task)
                         await db.update_cache_retention_config(task_id, status="running", paused_reason=None)
@@ -265,18 +260,16 @@ class CacheRetentionManager:
 
         except Exception as e:
             self._logger.error(f"恢复所有任务失败: {e}")
-    
+
     async def _execute_task(self, task_id: int):
         task = self._tasks.get(task_id)
         if not task:
             self._logger.error(f"任务 {task_id} 不存在")
             return
 
-        # 抢到执行权后再确认一次状态：调度期间可能已被其它路径改成 PAUSED
         if task.status != TaskStatus.RUNNING:
             return
 
-        # 初始化进度字段
         task.scanned_dirs = 0
         task.scanned_files = 0
         task.started_at = datetime.now(timezone.utc)
@@ -324,7 +317,6 @@ class CacheRetentionManager:
 
             file_count = await self._refresh_cache(task)
 
-            # 扫描完成即视为成功（空目录/仅有子目录也是正常结果）
             task.last_refresh_status = "success"
             task.error_message = None
             task.file_count = file_count
@@ -377,7 +369,7 @@ class CacheRetentionManager:
             t = self._tasks.get(task_id)
             if t:
                 t.started_at = None
-    
+
     async def _should_pause_task_due_to_ttl(self, task: CacheRetentionTask) -> bool:
         try:
             account = await db.get_account(task.account_id)
@@ -387,7 +379,6 @@ class CacheRetentionManager:
             account_config = account.get('config', {})
             cache_ttl = account_config.get('cache_ttl')
 
-            # cache_ttl=0 表示该账号显式关闭缓存
             if cache_ttl == 0:
                 return True
 
@@ -481,8 +472,8 @@ class CacheRetentionManager:
         except Exception as e:
             self._logger.error(f"递归缓存刷新失败: {e}")
             raise
-    
-    
+
+
     async def _pause_task(
         self,
         task: CacheRetentionTask,
@@ -493,7 +484,9 @@ class CacheRetentionManager:
         persist_error_message: Optional[str] = None,
         paused_reason: Optional[str] = "user",
     ):
-        """同步更新内存状态与数据库。paused_reason: user / account_disabled / auth_failure。"""
+        future = self._running_task_futures.get(task.config_id)
+        if future and future is not asyncio.current_task() and not future.done():
+            future.cancel()
         task.status = TaskStatus.PAUSED
         task.next_run_time = None
         task.paused_reason = paused_reason
@@ -534,10 +527,6 @@ class CacheRetentionManager:
                 if task.status != TaskStatus.RUNNING:
                     continue
 
-                future = self._running_task_futures.get(task.config_id)
-                if future and not future.done():
-                    future.cancel()
-
                 await self._pause_task(
                     task,
                     refresh_status="error",
@@ -571,7 +560,6 @@ class CacheRetentionManager:
                     continue
 
                 self._resume_task(task)
-                # 同步清掉遗留的错误标记，避免前端"红色三角"残留
                 task.last_refresh_status = None
                 task.error_message = None
                 await db.update_cache_retention_config(
@@ -699,7 +687,6 @@ class CacheRetentionManager:
             await cache_cleaner._clear_directory_cache(str(task.account_id), task.parent_id)
             self._logger.debug(f"已清理任务 {task.config_id} 的根目录缓存: {task.parent_id}")
 
-            # 递归任务的子目录 ID 在这里无法获知，子目录缓存只能依赖 TTL 自然过期
             if task.recursive:
                 self._logger.debug(f"任务 {task.config_id} 为递归任务，建议手动清理子目录缓存")
 
@@ -742,7 +729,8 @@ class CacheRetentionManager:
                 pass
 
             self._running_tasks.add(config_id)
-            asyncio.create_task(self._execute_task(config_id))
+            future = asyncio.create_task(self._execute_task(config_id))
+            self._running_task_futures[config_id] = future
             return "running"
 
         except Exception as e:
@@ -781,11 +769,15 @@ class CacheRetentionManager:
             if not running_tasks:
                 return 0
 
+            started_count = 0
             for task_id in running_tasks:
                 if task_id not in self._running_tasks:
                     self._running_tasks.add(task_id)
-                    asyncio.create_task(self._execute_task(task_id))
-            self._logger.debug(f"已触发 {len(running_tasks)} 个运行中任务")
+                    future = asyncio.create_task(self._execute_task(task_id))
+                    self._running_task_futures[task_id] = future
+                    started_count += 1
+            self._logger.debug(f"已触发 {started_count} 个运行中任务")
+            return started_count
 
         except Exception as e:
             self._logger.error(f"执行所有任务失败: {e}")

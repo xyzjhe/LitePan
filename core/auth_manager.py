@@ -29,6 +29,8 @@ _ACTIVE_COOLDOWN_STEPS = [
     (4, 1800),
 ]
 _ACTIVE_FAILED_THRESHOLD = 5
+# 被动刷新由业务请求触发，比主动刷新频率高，阈值放宽一些再判定 failed
+_PASSIVE_FAILED_THRESHOLD = 10
 _PASSIVE_COOLDOWN_SECONDS = 60
 _PASSIVE_SUCCESS_REUSE_SECONDS = 20
 
@@ -269,10 +271,22 @@ class AuthManager:
             await self._send_fatal_notification()
             return
 
-        await self._update_auth_status(
-            auth_status='cooldown',
-            retry_cooldown_seconds=_PASSIVE_COOLDOWN_SECONDS
-        )
+        # 累计失败次数，避免纯被动模式（主动刷新关闭）下死号永远在 active/cooldown 间振荡、永不 failed
+        current_attempts = self.refresh_attempts + 1
+        if current_attempts >= _PASSIVE_FAILED_THRESHOLD:
+            await self._update_auth_status(
+                auth_status='failed',
+                refresh_attempts=current_attempts
+            )
+            await _pause_related_tasks_for_auth_failure(
+                self.account_id, "账号认证连续失败，已暂停相关后台任务"
+            )
+        else:
+            await self._update_auth_status(
+                auth_status='cooldown',
+                refresh_attempts=current_attempts,
+                retry_cooldown_seconds=_PASSIVE_COOLDOWN_SECONDS
+            )
 
     async def _send_fatal_notification(self):
         try:
@@ -496,9 +510,9 @@ class AuthScheduler:
             if account_check_summaries:
                 auth_log("debug", "各账号检查时间: " + " | ".join(account_check_summaries))
 
-            # 首次循环里所有账号都被随机分到 60-90s 的开机避让窗口，
-            # "最短的那个"只是随机摇到的最小数，没有业务含义；
-            # 同时 _execute_check 会再打一条"首次启动，强制检查全部 N 个账号"，
+            # 首次循环里所有账号都进入 60-90s 的开机退避窗口（与其他同类程序错开，避免并发刷新冲突），
+            # "最短的那个"只是随机摇到的最小数，没有单独的业务含义；
+            # 退避结束后 _execute_check 会 force_all 全量检查并打印"首次启动，强制检查全部 N 个账号"，
             # 这里就不再重复输出，避免误导。
             if not first_loop:
                 if wait_seconds >= 60:
@@ -524,6 +538,8 @@ class AuthScheduler:
             import random
 
             if is_first_loop:
+                # 开机退避窗口：与其他同类程序（如同机其它容器）错开，让它们先刷新网盘认证，
+                # 避免开机瞬间多个程序并发刷新同一账号（尤其 115 一次性 refresh_token 会被烧掉）。
                 return current_time + random.randint(60, 90)
 
             if auth_status == 'failed' or auth_status == 'token_expired':

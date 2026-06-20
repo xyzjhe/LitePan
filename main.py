@@ -98,7 +98,6 @@ static_dir = Path("web/static")
 if static_dir.exists():
     app.mount("/assets", StaticFiles(directory=str(static_dir / "assets")), name="assets")
 else:
-    # 日志系统可能尚未初始化，两种路径都准备
     try:
         system_log = get_writer(LogModule.SYSTEM)
         system_log.warning(f"静态文件目录不存在: {static_dir}")
@@ -192,7 +191,6 @@ async def health_check():
 @app.api_route("/dav", methods=["GET", "HEAD", "PUT", "DELETE", "MKCOL", "MOVE", "COPY", "PROPFIND", "OPTIONS"])
 async def webdav_root_handler(request: Request):
     try:
-        # webdav 子系统依赖日志/缓存先就绪，这里延迟导入
         from webdav import get_webdav_server
         webdav_server = await get_webdav_server()
         if webdav_server is None:
@@ -240,7 +238,6 @@ async def serve_frontend(full_path: str):
     if static_file.exists() and static_file.is_file():
         return FileResponse(str(static_file))
 
-    # Vue SPA：其余路径一律回落到 index.html，由前端路由处理
     index_file = static_dir / "index.html"
     if index_file.exists():
         return build_frontend_entry_response(index_file)
@@ -283,7 +280,6 @@ if __name__ == "__main__":
 
     silence_uvicorn_invalid_http_warnings()
 
-    # 避免在某些场景下被 uvicorn 自动启用 reload
     os.environ['UVICORN_RELOAD'] = 'false'
 
     _gs_raw = os.getenv("LITEPAN_GRACEFUL_SHUTDOWN", "3").strip()
@@ -300,7 +296,6 @@ if __name__ == "__main__":
 
     try:
         if _web_host_override == "::":
-            # 显式指定双栈：失败则报错退出
             from uvicorn import Config, Server
 
             try:
@@ -325,7 +320,6 @@ if __name__ == "__main__":
             )
             Server(config=config).run(sockets=[_lsock])
         elif not _web_host_override:
-            # 未指定：自动尝试双栈，不可用则回退 IPv4
             from uvicorn import Config, Server
 
             try:
@@ -358,7 +352,6 @@ if __name__ == "__main__":
                 )
                 Server(config=config).run(sockets=[_lsock])
         else:
-            # 显式指定其他地址
             print(f"[{current_time}] INFO 系统 | 启动 {APP_NAME} 服务器 ({_web_host_override}:{_port})")
             uvicorn.run(
                 "main:app",
